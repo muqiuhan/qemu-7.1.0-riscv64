@@ -1,0 +1,18 @@
++------------+
+| QEMU 7.2.0 |
++------------+
+
+  This is the QEMU version that provides a simulation environment for OpheliaOS,
+  built using the following parameters:
+
+  ./configure --target-list=riscv64-softmmu,riscv64-linux-user
+
+
+o- This fork release fixes a bug that occurred during the build:
+
+  ../usr/include/linux/fs.h:50:8: error: redefinition of ‘struct file_clone_range’
+     50 | struct file_clone_range {
+        |        ^~~~~~~~~~~~~~~~
+  ../linux-user/syscall.c:130:8: note: originally defined here
+    130 | struct file_clone_range {
+        |        ^~~~~~~~~~~~~~~~
