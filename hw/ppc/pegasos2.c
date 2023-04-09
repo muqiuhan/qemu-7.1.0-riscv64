@@ -102,7 +102,7 @@ static void pegasos2_init(MachineState *machine)
     CPUPPCState *env;
     MemoryRegion *rom = g_new(MemoryRegion, 1);
     PCIBus *pci_bus;
-    PCIDevice *dev, *via;
+    PCIDevice *dev;
     I2CBus *i2c_bus;
     const char *fwname = machine->firmware ?: PROM_FILENAME;
     char *filename;
@@ -159,22 +159,29 @@ static void pegasos2_init(MachineState *machine)
     pci_bus = mv64361_get_pci_bus(pm->mv, 1);
 
     /* VIA VT8231 South Bridge (multifunction PCI device) */
-    via = pci_create_simple_multifunction(pci_bus, PCI_DEVFN(12, 0), true,
+    /* VT8231 function 0: PCI-to-ISA Bridge */
+    dev = pci_create_simple_multifunction(pci_bus, PCI_DEVFN(12, 0), true,
                                           TYPE_VT8231_ISA);
-    object_property_add_alias(OBJECT(machine), "rtc-time",
-                              object_resolve_path_component(OBJECT(via),
-                                                            "rtc"),
-                              "date");
-    qdev_connect_gpio_out(DEVICE(via), 0,
+    qdev_connect_gpio_out(DEVICE(dev), 0,
                           qdev_get_gpio_in_named(pm->mv, "gpp", 31));
 
-    dev = PCI_DEVICE(object_resolve_path_component(OBJECT(via), "ide"));
+    /* VT8231 function 1: IDE Controller */
+    dev = pci_create_simple(pci_bus, PCI_DEVFN(12, 1), "via-ide");
     pci_ide_create_devs(dev);
 
-    dev = PCI_DEVICE(object_resolve_path_component(OBJECT(via), "pm"));
+    /* VT8231 function 2-3: USB Ports */
+    pci_create_simple(pci_bus, PCI_DEVFN(12, 2), "vt82c686b-usb-uhci");
+    pci_create_simple(pci_bus, PCI_DEVFN(12, 3), "vt82c686b-usb-uhci");
+
+    /* VT8231 function 4: Power Management Controller */
+    dev = pci_create_simple(pci_bus, PCI_DEVFN(12, 4), TYPE_VT8231_PM);
     i2c_bus = I2C_BUS(qdev_get_child_bus(DEVICE(dev), "i2c"));
     spd_data = spd_data_generate(DDR, machine->ram_size);
     smbus_eeprom_init_one(i2c_bus, 0x57, spd_data);
+
+    /* VT8231 function 5-6: AC97 Audio & Modem */
+    pci_create_simple(pci_bus, PCI_DEVFN(12, 5), TYPE_VIA_AC97);
+    pci_create_simple(pci_bus, PCI_DEVFN(12, 6), TYPE_VIA_MC97);
 
     /* other PC hardware */
     pci_vga_init(pci_bus);
@@ -241,14 +248,14 @@ static void pegasos2_pci_config_write(Pegasos2MachineState *pm, int bus,
     pegasos2_mv_reg_write(pm, pcicfg + 4, len, val);
 }
 
-static void pegasos2_machine_reset(MachineState *machine, ShutdownCause reason)
+static void pegasos2_machine_reset(MachineState *machine)
 {
     Pegasos2MachineState *pm = PEGASOS2_MACHINE(machine);
     void *fdt;
     uint64_t d[2];
     int sz;
 
-    qemu_devices_reset(reason);
+    qemu_devices_reset();
     if (!pm->vof) {
         return; /* Firmware should set up machine so nothing to do */
     }
@@ -324,10 +331,6 @@ static void pegasos2_machine_reset(MachineState *machine, ShutdownCause reason)
 
     vof_build_dt(fdt, pm->vof);
     vof_client_open_store(fdt, pm->vof, "/chosen", "stdout", "/failsafe");
-
-    /* Set machine->fdt for 'dumpdtb' QMP/HMP command */
-    machine->fdt = fdt;
-
     pm->cpu->vhyp = PPC_VIRTUAL_HYPERVISOR(machine);
 }
 

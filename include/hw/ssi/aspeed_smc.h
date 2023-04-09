@@ -30,7 +30,6 @@
 #include "qom/object.h"
 
 struct AspeedSMCState;
-struct AspeedSMCClass;
 
 #define TYPE_ASPEED_SMC_FLASH "aspeed.smc.flash"
 OBJECT_DECLARE_SIMPLE_TYPE(AspeedSMCFlash, ASPEED_SMC_FLASH)
@@ -38,7 +37,6 @@ struct AspeedSMCFlash {
     SysBusDevice parent_obj;
 
     struct AspeedSMCState *controller;
-    struct AspeedSMCClass *asc;
     uint8_t cs;
 
     MemoryRegion mmio;

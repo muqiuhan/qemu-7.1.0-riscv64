@@ -150,12 +150,14 @@ void blockdev_mark_auto_del(BlockBackend *blk)
         return;
     }
 
-    JOB_LOCK_GUARD();
-
-    for (job = block_job_next_locked(NULL); job;
-         job = block_job_next_locked(job)) {
+    for (job = block_job_next(NULL); job; job = block_job_next(job)) {
         if (block_job_has_bdrv(job, blk_bs(blk))) {
-            job_cancel_locked(&job->job, false);
+            AioContext *aio_context = job->job.aio_context;
+            aio_context_acquire(aio_context);
+
+            job_cancel(&job->job, false);
+
+            aio_context_release(aio_context);
         }
     }
 
@@ -453,17 +455,6 @@ static void extract_common_blockdev_options(QemuOpts *opts, int *bdrv_flags,
     }
 }
 
-static OnOffAuto account_get_opt(QemuOpts *opts, const char *name)
-{
-    if (!qemu_opt_find(opts, name)) {
-        return ON_OFF_AUTO_AUTO;
-    }
-    if (qemu_opt_get_bool(opts, name, true)) {
-        return ON_OFF_AUTO_ON;
-    }
-    return ON_OFF_AUTO_OFF;
-}
-
 /* Takes the ownership of bs_opts */
 static BlockBackend *blockdev_init(const char *file, QDict *bs_opts,
                                    Error **errp)
@@ -471,7 +462,7 @@ static BlockBackend *blockdev_init(const char *file, QDict *bs_opts,
     const char *buf;
     int bdrv_flags = 0;
     int on_read_error, on_write_error;
-    OnOffAuto account_invalid, account_failed;
+    bool account_invalid, account_failed;
     bool writethrough, read_only;
     BlockBackend *blk;
     BlockDriverState *bs;
@@ -505,8 +496,8 @@ static BlockBackend *blockdev_init(const char *file, QDict *bs_opts,
     /* extract parameters */
     snapshot = qemu_opt_get_bool(opts, "snapshot", 0);
 
-    account_invalid = account_get_opt(opts, "stats-account-invalid");
-    account_failed = account_get_opt(opts, "stats-account-failed");
+    account_invalid = qemu_opt_get_bool(opts, "stats-account-invalid", true);
+    account_failed = qemu_opt_get_bool(opts, "stats-account-failed", true);
 
     writethrough = !qemu_opt_get_bool(opts, BDRV_OPT_CACHE_WB, true);
 
@@ -1630,8 +1621,8 @@ static void external_snapshot_abort(BlkActionState *common)
                 aio_context_release(aio_context);
                 aio_context_acquire(tmp_context);
 
-                ret = bdrv_try_change_aio_context(state->old_bs,
-                                                  aio_context, NULL, NULL);
+                ret = bdrv_try_set_aio_context(state->old_bs,
+                                               aio_context, NULL);
                 assert(ret == 0);
 
                 aio_context_release(tmp_context);
@@ -1792,12 +1783,12 @@ static void drive_backup_prepare(BlkActionState *common, Error **errp)
         goto out;
     }
 
-    /* Honor bdrv_try_change_aio_context() context acquisition requirements. */
+    /* Honor bdrv_try_set_aio_context() context acquisition requirements. */
     old_context = bdrv_get_aio_context(target_bs);
     aio_context_release(aio_context);
     aio_context_acquire(old_context);
 
-    ret = bdrv_try_change_aio_context(target_bs, aio_context, NULL, errp);
+    ret = bdrv_try_set_aio_context(target_bs, aio_context, errp);
     if (ret < 0) {
         bdrv_unref(target_bs);
         aio_context_release(old_context);
@@ -1842,7 +1833,14 @@ static void drive_backup_abort(BlkActionState *common)
     DriveBackupState *state = DO_UPCAST(DriveBackupState, common, common);
 
     if (state->job) {
+        AioContext *aio_context;
+
+        aio_context = bdrv_get_aio_context(state->bs);
+        aio_context_acquire(aio_context);
+
         job_cancel_sync(&state->job->job, true);
+
+        aio_context_release(aio_context);
     }
 }
 
@@ -1892,12 +1890,12 @@ static void blockdev_backup_prepare(BlkActionState *common, Error **errp)
         return;
     }
 
-    /* Honor bdrv_try_change_aio_context() context acquisition requirements. */
+    /* Honor bdrv_try_set_aio_context() context acquisition requirements. */
     aio_context = bdrv_get_aio_context(bs);
     old_context = bdrv_get_aio_context(target_bs);
     aio_context_acquire(old_context);
 
-    ret = bdrv_try_change_aio_context(target_bs, aio_context, NULL, errp);
+    ret = bdrv_try_set_aio_context(target_bs, aio_context, errp);
     if (ret < 0) {
         aio_context_release(old_context);
         return;
@@ -1936,7 +1934,14 @@ static void blockdev_backup_abort(BlkActionState *common)
     BlockdevBackupState *state = DO_UPCAST(BlockdevBackupState, common, common);
 
     if (state->job) {
+        AioContext *aio_context;
+
+        aio_context = bdrv_get_aio_context(state->bs);
+        aio_context_acquire(aio_context);
+
         job_cancel_sync(&state->job->job, true);
+
+        aio_context_release(aio_context);
     }
 }
 
@@ -2448,7 +2453,7 @@ void coroutine_fn qmp_block_resize(bool has_device, const char *device,
     bdrv_co_unlock(bs);
 
     old_ctx = bdrv_co_enter(bs);
-    blk_co_truncate(blk, size, false, PREALLOC_MODE_OFF, 0, errp);
+    blk_truncate(blk, size, false, PREALLOC_MODE_OFF, 0, errp);
     bdrv_co_leave(bs, old_ctx);
 
     bdrv_co_lock(bs);
@@ -3194,12 +3199,12 @@ void qmp_drive_mirror(DriveMirror *arg, Error **errp)
                     !bdrv_has_zero_init(target_bs)));
 
 
-    /* Honor bdrv_try_change_aio_context() context acquisition requirements. */
+    /* Honor bdrv_try_set_aio_context() context acquisition requirements. */
     old_context = bdrv_get_aio_context(target_bs);
     aio_context_release(aio_context);
     aio_context_acquire(old_context);
 
-    ret = bdrv_try_change_aio_context(target_bs, aio_context, NULL, errp);
+    ret = bdrv_try_set_aio_context(target_bs, aio_context, errp);
     if (ret < 0) {
         bdrv_unref(target_bs);
         aio_context_release(old_context);
@@ -3266,12 +3271,12 @@ void qmp_blockdev_mirror(bool has_job_id, const char *job_id,
 
     zero_target = (sync == MIRROR_SYNC_MODE_FULL);
 
-    /* Honor bdrv_try_change_aio_context() context acquisition requirements. */
+    /* Honor bdrv_try_set_aio_context() context acquisition requirements. */
     old_context = bdrv_get_aio_context(target_bs);
     aio_context = bdrv_get_aio_context(bs);
     aio_context_acquire(old_context);
 
-    ret = bdrv_try_change_aio_context(target_bs, aio_context, NULL, errp);
+    ret = bdrv_try_set_aio_context(target_bs, aio_context, errp);
 
     aio_context_release(old_context);
     aio_context_acquire(aio_context);
@@ -3297,16 +3302,17 @@ out:
     aio_context_release(aio_context);
 }
 
-/*
- * Get a block job using its ID. Called with job_mutex held.
- */
-static BlockJob *find_block_job_locked(const char *id, Error **errp)
+/* Get a block job using its ID and acquire its AioContext */
+static BlockJob *find_block_job(const char *id, AioContext **aio_context,
+                                Error **errp)
 {
     BlockJob *job;
 
     assert(id != NULL);
 
-    job = block_job_get_locked(id);
+    *aio_context = NULL;
+
+    job = block_job_get(id);
 
     if (!job) {
         error_set(errp, ERROR_CLASS_DEVICE_NOT_ACTIVE,
@@ -3314,30 +3320,30 @@ static BlockJob *find_block_job_locked(const char *id, Error **errp)
         return NULL;
     }
 
+    *aio_context = block_job_get_aio_context(job);
+    aio_context_acquire(*aio_context);
+
     return job;
 }
 
 void qmp_block_job_set_speed(const char *device, int64_t speed, Error **errp)
 {
-    BlockJob *job;
-
-    JOB_LOCK_GUARD();
-    job = find_block_job_locked(device, errp);
+    AioContext *aio_context;
+    BlockJob *job = find_block_job(device, &aio_context, errp);
 
     if (!job) {
         return;
     }
 
-    block_job_set_speed_locked(job, speed, errp);
+    block_job_set_speed(job, speed, errp);
+    aio_context_release(aio_context);
 }
 
 void qmp_block_job_cancel(const char *device,
                           bool has_force, bool force, Error **errp)
 {
-    BlockJob *job;
-
-    JOB_LOCK_GUARD();
-    job = find_block_job_locked(device, errp);
+    AioContext *aio_context;
+    BlockJob *job = find_block_job(device, &aio_context, errp);
 
     if (!job) {
         return;
@@ -3347,86 +3353,88 @@ void qmp_block_job_cancel(const char *device,
         force = false;
     }
 
-    if (job_user_paused_locked(&job->job) && !force) {
+    if (job_user_paused(&job->job) && !force) {
         error_setg(errp, "The block job for device '%s' is currently paused",
                    device);
-        return;
+        goto out;
     }
 
     trace_qmp_block_job_cancel(job);
-    job_user_cancel_locked(&job->job, force, errp);
+    job_user_cancel(&job->job, force, errp);
+out:
+    aio_context_release(aio_context);
 }
 
 void qmp_block_job_pause(const char *device, Error **errp)
 {
-    BlockJob *job;
-
-    JOB_LOCK_GUARD();
-    job = find_block_job_locked(device, errp);
+    AioContext *aio_context;
+    BlockJob *job = find_block_job(device, &aio_context, errp);
 
     if (!job) {
         return;
     }
 
     trace_qmp_block_job_pause(job);
-    job_user_pause_locked(&job->job, errp);
+    job_user_pause(&job->job, errp);
+    aio_context_release(aio_context);
 }
 
 void qmp_block_job_resume(const char *device, Error **errp)
 {
-    BlockJob *job;
-
-    JOB_LOCK_GUARD();
-    job = find_block_job_locked(device, errp);
+    AioContext *aio_context;
+    BlockJob *job = find_block_job(device, &aio_context, errp);
 
     if (!job) {
         return;
     }
 
     trace_qmp_block_job_resume(job);
-    job_user_resume_locked(&job->job, errp);
+    job_user_resume(&job->job, errp);
+    aio_context_release(aio_context);
 }
 
 void qmp_block_job_complete(const char *device, Error **errp)
 {
-    BlockJob *job;
-
-    JOB_LOCK_GUARD();
-    job = find_block_job_locked(device, errp);
+    AioContext *aio_context;
+    BlockJob *job = find_block_job(device, &aio_context, errp);
 
     if (!job) {
         return;
     }
 
     trace_qmp_block_job_complete(job);
-    job_complete_locked(&job->job, errp);
+    job_complete(&job->job, errp);
+    aio_context_release(aio_context);
 }
 
 void qmp_block_job_finalize(const char *id, Error **errp)
 {
-    BlockJob *job;
-
-    JOB_LOCK_GUARD();
-    job = find_block_job_locked(id, errp);
+    AioContext *aio_context;
+    BlockJob *job = find_block_job(id, &aio_context, errp);
 
     if (!job) {
         return;
     }
 
     trace_qmp_block_job_finalize(job);
-    job_ref_locked(&job->job);
-    job_finalize_locked(&job->job, errp);
+    job_ref(&job->job);
+    job_finalize(&job->job, errp);
 
-    job_unref_locked(&job->job);
+    /*
+     * Job's context might have changed via job_finalize (and job_txn_apply
+     * automatically acquires the new one), so make sure we release the correct
+     * one.
+     */
+    aio_context = block_job_get_aio_context(job);
+    job_unref(&job->job);
+    aio_context_release(aio_context);
 }
 
 void qmp_block_job_dismiss(const char *id, Error **errp)
 {
-    BlockJob *bjob;
+    AioContext *aio_context;
+    BlockJob *bjob = find_block_job(id, &aio_context, errp);
     Job *job;
-
-    JOB_LOCK_GUARD();
-    bjob = find_block_job_locked(id, errp);
 
     if (!bjob) {
         return;
@@ -3434,7 +3442,8 @@ void qmp_block_job_dismiss(const char *id, Error **errp)
 
     trace_qmp_block_job_dismiss(bjob);
     job = &bjob->job;
-    job_dismiss_locked(&job, errp);
+    job_dismiss(&job, errp);
+    aio_context_release(aio_context);
 }
 
 void qmp_change_backing_file(const char *device,
@@ -3711,16 +3720,17 @@ BlockJobInfoList *qmp_query_block_jobs(Error **errp)
     BlockJobInfoList *head = NULL, **tail = &head;
     BlockJob *job;
 
-    JOB_LOCK_GUARD();
-
-    for (job = block_job_next_locked(NULL); job;
-         job = block_job_next_locked(job)) {
+    for (job = block_job_next(NULL); job; job = block_job_next(job)) {
         BlockJobInfo *value;
+        AioContext *aio_context;
 
         if (block_job_is_internal(job)) {
             continue;
         }
-        value = block_job_query_locked(job, errp);
+        aio_context = block_job_get_aio_context(job);
+        aio_context_acquire(aio_context);
+        value = block_job_query(job, errp);
+        aio_context_release(aio_context);
         if (!value) {
             qapi_free_BlockJobInfoList(head);
             return NULL;
@@ -3767,7 +3777,7 @@ void qmp_x_blockdev_set_iothread(const char *node_name, StrOrNull *iothread,
     old_context = bdrv_get_aio_context(bs);
     aio_context_acquire(old_context);
 
-    bdrv_try_change_aio_context(bs, new_context, NULL, errp);
+    bdrv_try_set_aio_context(bs, new_context, errp);
 
     aio_context_release(old_context);
 }

@@ -224,16 +224,15 @@ static bool check_guest_output(QTestState *qts, const testdef_t *test, int fd)
 static void test_machine(const void *data)
 {
     const testdef_t *test = data;
-    g_autofree char *serialtmp = NULL;
-    g_autofree char *codetmp = NULL;
+    char serialtmp[] = "/tmp/qtest-boot-serial-sXXXXXX";
+    char codetmp[] = "/tmp/qtest-boot-serial-cXXXXXX";
     const char *codeparam = "";
     const uint8_t *code = NULL;
     QTestState *qts;
     int ser_fd;
 
-    ser_fd = g_file_open_tmp("qtest-boot-serial-sXXXXXX", &serialtmp, NULL);
+    ser_fd = mkstemp(serialtmp);
     g_assert(ser_fd != -1);
-    close(ser_fd);
 
     if (test->kernel) {
         code = test->kernel;
@@ -247,7 +246,7 @@ static void test_machine(const void *data)
         ssize_t wlen;
         int code_fd;
 
-        code_fd = g_file_open_tmp("qtest-boot-serial-cXXXXXX", &codetmp, NULL);
+        code_fd = mkstemp(codetmp);
         g_assert(code_fd != -1);
         wlen = write(code_fd, code, test->codesize);
         g_assert(wlen == test->codesize);
@@ -267,8 +266,6 @@ static void test_machine(const void *data)
         unlink(codetmp);
     }
 
-    ser_fd = open(serialtmp, O_RDONLY);
-    g_assert(ser_fd != -1);
     if (!check_guest_output(qts, test, ser_fd)) {
         g_error("Failed to find expected string. Please check '%s'",
                 serialtmp);

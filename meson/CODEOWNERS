@@ -7,5 +7,3 @@
 /mesonbuild/cmake/ @mensinda
 /mesonbuild/compilers/ @dcbaker
 /mesonbuild/linkers.py @dcbaker
-/mesonbuild/mtest.py @bonzini
-/docs/refman @mensinda

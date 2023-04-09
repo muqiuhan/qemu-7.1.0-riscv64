@@ -12,3 +12,4 @@ int func2(void);
 #endif
 
 int DLL_PUBLIC func(void) { return func2(); }
+

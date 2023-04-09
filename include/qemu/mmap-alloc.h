@@ -4,6 +4,8 @@
 
 size_t qemu_fd_getpagesize(int fd);
 
+size_t qemu_mempath_getpagesize(const char *mem_path);
+
 /**
  * qemu_ram_mmap: mmap anonymous memory, the specified file or device.
  *

@@ -102,24 +102,26 @@ class ExternalProgram(mesonlib.HoldableObject):
 
     def get_version(self, interpreter: 'Interpreter') -> str:
         if not self.cached_version:
-            from . import build
             raw_cmd = self.get_command() + ['--version']
-            res = interpreter.run_command_impl(interpreter.current_node, (self, ['--version']),
-                                               {'capture': True, 'check': True, 'env': build.EnvironmentVariables()},
-                                               True)
+            cmd: T.List[T.Union[str, ExternalProgram]] = [self, '--version']
+            res = interpreter.run_command_impl(interpreter.current_node, cmd, {}, True)
+            if res.returncode != 0:
+                m = 'Running {!r} failed'
+                raise mesonlib.MesonException(m.format(raw_cmd))
             output = res.stdout.strip()
             if not output:
                 output = res.stderr.strip()
             match = re.search(r'([0-9][0-9\.]+)', output)
             if not match:
-                raise mesonlib.MesonException(f'Could not find a version number in output of {raw_cmd!r}')
+                m = 'Could not find a version number in output of {!r}'
+                raise mesonlib.MesonException(m.format(raw_cmd))
             self.cached_version = match.group(1)
         return self.cached_version
 
     @classmethod
     def from_bin_list(cls, env: 'Environment', for_machine: MachineChoice, name: str) -> 'ExternalProgram':
         # There is a static `for_machine` for this class because the binary
-        # always runs on the build platform. (It's host platform is our build
+        # aways runs on the build platform. (It's host platform is our build
         # platform.) But some external programs have a target platform, so this
         # is what we are specifying here.
         command = env.lookup_binary_entry(for_machine, name)

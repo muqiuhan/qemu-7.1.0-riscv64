@@ -34,9 +34,9 @@ static inline unsigned long arm_max_reserved_va(CPUState *cs)
     } else {
         /*
          * We need to be able to map the commpage.
-         * See init_guest_commpage in linux-user/elfload.c.
+         * See validate_guest_space in linux-user/elfload.c.
          */
-        return 0xfffffffful;
+        return 0xffff0000ul;
     }
 }
 #define MAX_RESERVED_VA  arm_max_reserved_va

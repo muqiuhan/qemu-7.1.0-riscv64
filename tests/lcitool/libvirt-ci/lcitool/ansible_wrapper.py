@@ -33,8 +33,7 @@ class ExecutionError(AnsibleWrapperError):
 
     def __init__(self, message):
         message_prefix = "Ansible execution failed: "
-        message = message_prefix + message
-        super().__init__(message)
+        self.message = message_prefix + message
 
 
 class EnvironmentError(AnsibleWrapperError):
@@ -42,8 +41,7 @@ class EnvironmentError(AnsibleWrapperError):
 
     def __init__(self, message):
         message_prefix = "Failed to prepare the execution environment: "
-        message = message_prefix + message
-        super().__init__(message)
+        self.message = message_prefix + message
 
 
 class AnsibleWrapper():
@@ -241,18 +239,15 @@ class AnsibleWrapper():
                 f"ansible-inventory didn't return a valid YAML: {ex}"
             )
 
-    def run_playbook(self, limit=None, verbosity=0):
+    def run_playbook(self, limit=None):
         """
         :param limit: list of hosts to restrict the playbook execution to
-        :param verbosity: verbosity of underlying ansible invocation
         :returns: None
         """
 
         params = self._get_default_params()
         params["playbook"] = "main.yml"
 
-        if verbosity:
-            params["verbosity"] = verbosity
         if limit:
             params["limit"] = ','.join(limit)
 

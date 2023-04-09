@@ -209,7 +209,6 @@ static int emc_module_index(const EMCModule *mod)
     return diff;
 }
 
-#ifndef _WIN32
 static void packet_test_clear(void *sockets)
 {
     int *test_sockets = sockets;
@@ -244,7 +243,6 @@ static int *packet_test_init(int module_num, GString *cmd_line)
     g_test_queue_destroy(packet_test_clear, test_sockets);
     return test_sockets;
 }
-#endif /* _WIN32 */
 
 static uint32_t emc_read(QTestState *qts, const EMCModule *mod,
                          NPCM7xxPWMRegister regno)
@@ -252,7 +250,6 @@ static uint32_t emc_read(QTestState *qts, const EMCModule *mod,
     return qtest_readl(qts, mod->base_addr + regno * sizeof(uint32_t));
 }
 
-#ifndef _WIN32
 static void emc_write(QTestState *qts, const EMCModule *mod,
                       NPCM7xxPWMRegister regno, uint32_t value)
 {
@@ -342,7 +339,6 @@ static bool emc_soft_reset(QTestState *qts, const EMCModule *mod)
     g_message("%s: Timeout expired", __func__);
     return false;
 }
-#endif /* _WIN32 */
 
 /* Check emc registers are reset to default value. */
 static void test_init(gconstpointer test_data)
@@ -381,8 +377,7 @@ static void test_init(gconstpointer test_data)
 
 #undef CHECK_REG
 
-    /* Skip over the MAC address registers, which is BASE+0 */
-    for (i = 1; i < NUM_CAMML_REGS; ++i) {
+    for (i = 0; i < NUM_CAMML_REGS; ++i) {
         g_assert_cmpuint(emc_read(qts, mod, REG_CAMM_BASE + i * 2), ==,
                          0);
         g_assert_cmpuint(emc_read(qts, mod, REG_CAML_BASE + i * 2), ==,
@@ -392,7 +387,6 @@ static void test_init(gconstpointer test_data)
     qtest_quit(qts);
 }
 
-#ifndef _WIN32
 static bool emc_wait_irq(QTestState *qts, const EMCModule *mod, int step,
                          bool is_tx)
 {
@@ -849,7 +843,6 @@ static void test_rx(gconstpointer test_data)
 
     qtest_quit(qts);
 }
-#endif /* _WIN32 */
 
 static void emc_add_test(const char *name, const TestData* td,
                          GTestDataFunc fn)
@@ -872,10 +865,8 @@ int main(int argc, char **argv)
         td->module = &emc_module_list[i];
 
         add_test(init, td);
-#ifndef _WIN32
         add_test(tx, td);
         add_test(rx, td);
-#endif
     }
 
     return g_test_run();

@@ -136,12 +136,17 @@ static void msix_handle_mask_update(PCIDevice *dev, int vector, bool was_masked)
     }
 }
 
-void msix_set_mask(PCIDevice *dev, int vector, bool mask)
+void msix_set_mask(PCIDevice *dev, int vector, bool mask, Error **errp)
 {
+    ERRP_GUARD();
     unsigned offset;
     bool was_masked;
 
-    assert(vector < dev->msix_entries_nr);
+    if (vector > dev->msix_entries_nr) {
+        error_setg(errp, "msix: vector %d not allocated. max vector is %d",
+                   vector, dev->msix_entries_nr);
+        return;
+    }
 
     offset = vector * PCI_MSIX_ENTRY_SIZE + PCI_MSIX_ENTRY_VECTOR_CTRL;
 
@@ -517,9 +522,7 @@ void msix_notify(PCIDevice *dev, unsigned vector)
 {
     MSIMessage msg;
 
-    assert(vector < dev->msix_entries_nr);
-
-    if (!dev->msix_entry_used[vector]) {
+    if (vector >= dev->msix_entries_nr || !dev->msix_entry_used[vector]) {
         return;
     }
 
@@ -555,17 +558,20 @@ void msix_reset(PCIDevice *dev)
  * don't want to follow the spec suggestion can declare all vectors as used. */
 
 /* Mark vector as used. */
-void msix_vector_use(PCIDevice *dev, unsigned vector)
+int msix_vector_use(PCIDevice *dev, unsigned vector)
 {
-    assert(vector < dev->msix_entries_nr);
+    if (vector >= dev->msix_entries_nr) {
+        return -EINVAL;
+    }
+
     dev->msix_entry_used[vector]++;
+    return 0;
 }
 
 /* Mark vector as unused. */
 void msix_vector_unuse(PCIDevice *dev, unsigned vector)
 {
-    assert(vector < dev->msix_entries_nr);
-    if (!dev->msix_entry_used[vector]) {
+    if (vector >= dev->msix_entries_nr || !dev->msix_entry_used[vector]) {
         return;
     }
     if (--dev->msix_entry_used[vector]) {

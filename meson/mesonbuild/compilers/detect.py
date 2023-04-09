@@ -34,7 +34,6 @@ from ..linkers import (
     C2000Linker,
     C2000DynamicLinker,
     DLinker,
-    NAGDynamicLinker,
     NvidiaHPC_DynamicLinker,
     PGIDynamicLinker,
     PGIStaticLinker,
@@ -124,7 +123,7 @@ from .objcpp import (
     GnuObjCPPCompiler,
 )
 from .cython import CythonCompiler
-from .rust import RustCompiler, ClippyRustCompiler
+from .rust import RustCompiler
 from .swift import SwiftCompiler
 from .vala import ValaCompiler
 from .mixins.visualstudio import VisualStudioLikeCompiler
@@ -142,6 +141,8 @@ import typing as T
 if T.TYPE_CHECKING:
     from ..environment import Environment
     from ..programs import ExternalProgram
+    from .compilers import CompilerType
+
 
 
 # Default compilers and linkers
@@ -166,10 +167,12 @@ if is_windows():
     defaults['cs'] = ['csc', 'mcs']
 else:
     if platform.machine().lower() == 'e2k':
-        defaults['c'] = ['cc', 'gcc', 'lcc', 'clang']
-        defaults['cpp'] = ['c++', 'g++', 'l++', 'clang++']
-        defaults['objc'] = ['clang']
-        defaults['objcpp'] = ['clang++']
+        # There are no objc or objc++ compilers for Elbrus,
+        # and there's no clang which can build binaries for host.
+        defaults['c'] = ['cc', 'gcc', 'lcc']
+        defaults['cpp'] = ['c++', 'g++', 'l++']
+        defaults['objc'] = []
+        defaults['objcpp'] = []
     else:
         defaults['c'] = ['cc', 'gcc', 'clang', 'nvc', 'pgcc', 'icc']
         defaults['cpp'] = ['c++', 'g++', 'clang++', 'nvc++', 'pgc++', 'icpc']
@@ -183,7 +186,7 @@ defaults['cuda'] = ['nvcc']
 defaults['rust'] = ['rustc']
 defaults['swift'] = ['swiftc']
 defaults['vala'] = ['valac']
-defaults['cython'] = ['cython', 'cython3'] # Official name is cython, but Debian renamed it to cython3.
+defaults['cython'] = ['cython']
 defaults['static_linker'] = ['ar', 'gar']
 defaults['strip'] = ['strip']
 defaults['vs_static_linker'] = ['lib']
@@ -211,7 +214,7 @@ def compiler_from_language(env: 'Environment', lang: str, for_machine: MachineCh
     }
     return lang_map[lang](env, for_machine) if lang in lang_map else None
 
-def detect_compiler_for(env: 'Environment', lang: str, for_machine: MachineChoice) -> T.Optional[Compiler]:
+def detect_compiler_for(env: 'Environment', lang: str, for_machine: MachineChoice)-> T.Optional[Compiler]:
     comp = compiler_from_language(env, lang, for_machine)
     if comp is not None:
         assert comp.for_machine == for_machine
@@ -236,7 +239,7 @@ def _get_compilers(env: 'Environment', lang: str, for_machine: MachineChoice) ->
         if not env.machines.matches_build_machine(for_machine):
             raise EnvironmentException(f'{lang!r} compiler binary not defined in cross or native file')
         compilers = [[x] for x in defaults[lang]]
-        ccache = BinaryTable.detect_compiler_cache()
+        ccache = BinaryTable.detect_ccache()
 
     if env.machines.matches_build_machine(for_machine):
         exe_wrap: T.Optional[ExternalProgram] = None
@@ -339,6 +342,7 @@ def detect_static_linker(env: 'Environment', compiler: Compiler) -> StaticLinker
     _handle_exceptions(popen_exceptions, linkers, 'linker')
 
 
+
 # Compilers
 # =========
 
@@ -378,12 +382,9 @@ def _detect_c_or_cpp_compiler(env: 'Environment', lang: str, for_machine: Machin
                     return os.path.normcase(os.path.abspath(p))
 
                 watcom_cls = [sanitize(os.path.join(os.environ['WATCOM'], 'BINNT', 'cl')),
-                                sanitize(os.path.join(os.environ['WATCOM'], 'BINNT', 'cl.exe')),
-                                sanitize(os.path.join(os.environ['WATCOM'], 'BINNT64', 'cl')),
-                                sanitize(os.path.join(os.environ['WATCOM'], 'BINNT64', 'cl.exe')),]
+                                sanitize(os.path.join(os.environ['WATCOM'], 'BINNT', 'cl.exe'))]
                 found_cl = sanitize(shutil.which('cl'))
                 if found_cl in watcom_cls:
-                    mlog.debug('Skipping unsupported cl.exe clone at:', found_cl)
                     continue
             arg = '/?'
         elif 'armcc' in compiler_name:
@@ -557,13 +558,8 @@ def _detect_c_or_cpp_compiler(env: 'Environment', lang: str, for_machine: Machin
                 raise EnvironmentException(m)
             cls = VisualStudioCCompiler if lang == 'c' else VisualStudioCPPCompiler
             linker = guess_win_linker(env, ['link'], cls, for_machine)
-            # As of this writing, CCache does not support MSVC but sccache does.
-            if 'sccache' in ccache:
-                final_compiler = ccache + compiler
-            else:
-                final_compiler = compiler
             return cls(
-                final_compiler, version, for_machine, is_cross, info, target,
+                compiler, version, for_machine, is_cross, info, target,
                 exe_wrap, full_version=cl_signature, linker=linker)
         if 'PGI Compilers' in out:
             cls = PGICCompiler if lang == 'c' else PGICPPCompiler
@@ -623,6 +619,7 @@ def _detect_c_or_cpp_compiler(env: 'Environment', lang: str, for_machine: Machin
             return cls(
                 ccache + compiler, version, for_machine, is_cross, info,
                 exe_wrap, full_version=full_version, linker=linker)
+
 
     _handle_exceptions(popen_exceptions, compilers)
     raise EnvironmentException(f'Unknown compiler {compilers}')
@@ -699,17 +696,14 @@ def detect_fortran_compiler(env: 'Environment', for_machine: MachineChoice) -> C
                 if guess_gcc_or_lcc == 'lcc':
                     version = _get_lcc_version_from_defines(defines)
                     cls = ElbrusFortranCompiler
-                    linker = guess_nix_linker(env, compiler, cls, for_machine)
-                    return cls(
-                        compiler, version, for_machine, is_cross, info,
-                        exe_wrap, defines, full_version=full_version, linker=linker)
                 else:
                     version = _get_gnu_version_from_defines(defines)
                     cls = GnuFortranCompiler
-                    linker = guess_nix_linker(env, compiler, cls, for_machine)
-                    return cls(
-                        compiler, version, for_machine, is_cross, info,
-                        exe_wrap, defines, full_version=full_version, linker=linker)
+                linker = guess_nix_linker(env, compiler, cls, for_machine)
+                return cls(
+                    compiler, version, for_machine, is_cross, info,
+                    exe_wrap, defines, full_version=full_version,
+                    linker=linker)
 
             if 'G95' in out:
                 cls = G95FortranCompiler
@@ -780,14 +774,9 @@ def detect_fortran_compiler(env: 'Environment', for_machine: MachineChoice) -> C
                     exe_wrap, full_version=full_version, linker=linker)
 
             if 'NAG Fortran' in err:
-                full_version = err.split('\n', 1)[0]
-                version = full_version.split()[-1]
-                cls = NAGFortranCompiler
-                env.coredata.add_lang_args(cls.language, cls, for_machine, env)
-                linker = NAGDynamicLinker(
-                    compiler, for_machine, cls.LINKER_PREFIX, [],
-                    version=version)
-                return cls(
+                linker = guess_nix_linker(env,
+                    compiler, NAGFortranCompiler, for_machine)
+                return NAGFortranCompiler(
                     compiler, version, for_machine, is_cross, info,
                     exe_wrap, full_version=full_version, linker=linker)
 
@@ -958,13 +947,6 @@ def detect_rust_compiler(env: 'Environment', for_machine: MachineChoice) -> Rust
             continue
 
         version = search_version(out)
-        cls: T.Type[RustCompiler] = RustCompiler
-
-        # Clippy is a wrapper around rustc, but it doesn't have rustc in it's
-        # output. We can otherwise treat it as rustc.
-        if 'clippy' in out:
-            out = 'rustc'
-            cls = ClippyRustCompiler
 
         if 'rustc' in out:
             # On Linux and mac rustc will invoke gcc (clang for mac
@@ -983,13 +965,11 @@ def detect_rust_compiler(env: 'Environment', for_machine: MachineChoice) -> Rust
                     'or use the RUST_LD environment variable, otherwise meson '
                     'will override your selection.')
 
-            compiler = compiler.copy()  # avoid mutating the original list
-
             if override is None:
                 extra_args: T.Dict[str, T.Union[str, bool]] = {}
                 always_args: T.List[str] = []
                 if is_link_exe:
-                    compiler.extend(cls.use_linker_args(cc.linker.exelist[0]))
+                    compiler.extend(RustCompiler.use_linker_args(cc.linker.exelist[0]))
                     extra_args['direct'] = True
                     extra_args['machine'] = cc.linker.machine
                 else:
@@ -997,7 +977,7 @@ def detect_rust_compiler(env: 'Environment', for_machine: MachineChoice) -> Rust
                     if 'ccache' in exelist[0]:
                         del exelist[0]
                     c = exelist.pop(0)
-                    compiler.extend(cls.use_linker_args(c))
+                    compiler.extend(RustCompiler.use_linker_args(c))
 
                     # Also ensure that we pass any extra arguments to the linker
                     for l in exelist:
@@ -1012,15 +992,15 @@ def detect_rust_compiler(env: 'Environment', for_machine: MachineChoice) -> Rust
                 else:
                     linker = type(cc.linker)(compiler, for_machine, cc.LINKER_PREFIX,
                                                 always_args=always_args, version=cc.linker.version,
-                                                **extra_args)
+                                                **extra_args) # type: ignore
             elif 'link' in override[0]:
                 linker = guess_win_linker(env,
-                    override, cls, for_machine, use_linker_prefix=False)
+                    override, RustCompiler, for_machine, use_linker_prefix=False)
                 # rustc takes linker arguments without a prefix, and
                 # inserts the correct prefix itself.
                 assert isinstance(linker, VisualStudioLikeLinkerMixin)
                 linker.direct = True
-                compiler.extend(cls.use_linker_args(linker.exelist[0]))
+                compiler.extend(RustCompiler.use_linker_args(linker.exelist[0]))
             else:
                 # On linux and macos rust will invoke the c compiler for
                 # linking, on windows it will use lld-link or link.exe.
@@ -1032,10 +1012,10 @@ def detect_rust_compiler(env: 'Environment', for_machine: MachineChoice) -> Rust
                 # Of course, we're not going to use any of that, we just
                 # need it to get the proper arguments to pass to rustc
                 c = linker.exelist[1] if linker.exelist[0].endswith('ccache') else linker.exelist[0]
-                compiler.extend(cls.use_linker_args(c))
+                compiler.extend(RustCompiler.use_linker_args(c))
 
-            env.coredata.add_lang_args(cls.language, cls, for_machine, env)
-            return cls(
+            env.coredata.add_lang_args(RustCompiler.language, RustCompiler, for_machine, env)
+            return RustCompiler(
                 compiler, version, for_machine, is_cross, info, exe_wrap,
                 linker=linker)
 

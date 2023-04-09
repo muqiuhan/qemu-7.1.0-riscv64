@@ -3,7 +3,7 @@
 
 #include "../libqtest.h"
 #include "pci.h"
-#include "libqos-malloc.h"
+#include "malloc.h"
 
 typedef struct QOSState QOSState;
 

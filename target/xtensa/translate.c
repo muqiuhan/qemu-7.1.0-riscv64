@@ -1279,12 +1279,10 @@ static const TranslatorOps xtensa_translator_ops = {
     .disas_log          = xtensa_tr_disas_log,
 };
 
-void gen_intermediate_code(CPUState *cpu, TranslationBlock *tb, int max_insns,
-                           target_ulong pc, void *host_pc)
+void gen_intermediate_code(CPUState *cpu, TranslationBlock *tb, int max_insns)
 {
     DisasContext dc = {};
-    translator_loop(cpu, tb, max_insns, pc, host_pc,
-                    &xtensa_translator_ops, &dc.base);
+    translator_loop(&xtensa_translator_ops, &dc.base, cpu, tb, max_insns);
 }
 
 void xtensa_cpu_dump_state(CPUState *cs, FILE *f, int flags)
@@ -1353,6 +1351,12 @@ void xtensa_cpu_dump_state(CPUState *cs, FILE *f, int flags)
                          (i % 2) == 1 ? '\n' : ' ');
         }
     }
+}
+
+void restore_state_to_opc(CPUXtensaState *env, TranslationBlock *tb,
+                          target_ulong *data)
+{
+    env->pc = data[0];
 }
 
 static void translate_abs(DisasContext *dc, const OpcodeArg arg[],
@@ -2356,14 +2360,13 @@ static uint32_t test_exceptions_simcall(DisasContext *dc,
                                         const OpcodeArg arg[],
                                         const uint32_t par[])
 {
-    bool is_semi = semihosting_enabled(dc->cring != 0);
 #ifdef CONFIG_USER_ONLY
     bool ill = true;
 #else
     /* Between RE.2 and RE.3 simcall opcode's become nop for the hardware. */
-    bool ill = dc->config->hw_version <= 250002 && !is_semi;
+    bool ill = dc->config->hw_version <= 250002 && !semihosting_enabled();
 #endif
-    if (ill || !is_semi) {
+    if (ill || !semihosting_enabled()) {
         qemu_log_mask(LOG_GUEST_ERROR, "SIMCALL but semihosting is disabled\n");
     }
     return ill ? XTENSA_OP_ILL : 0;
@@ -2373,7 +2376,7 @@ static void translate_simcall(DisasContext *dc, const OpcodeArg arg[],
                               const uint32_t par[])
 {
 #ifndef CONFIG_USER_ONLY
-    if (semihosting_enabled(dc->cring != 0)) {
+    if (semihosting_enabled()) {
         gen_helper_simcall(cpu_env);
     }
 #endif

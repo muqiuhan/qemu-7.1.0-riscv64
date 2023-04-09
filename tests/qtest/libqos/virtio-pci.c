@@ -13,7 +13,7 @@
 #include "virtio-pci.h"
 #include "pci.h"
 #include "pci-pc.h"
-#include "libqos-malloc.h"
+#include "malloc.h"
 #include "malloc-pc.h"
 #include "qgraph.h"
 #include "standard-headers/linux/virtio_ring.h"

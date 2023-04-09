@@ -6,3 +6,4 @@ is.project('spin',
   'spin.v',
   constraint_file : 'spin.pcf',
 )
+

@@ -48,14 +48,12 @@
 #include "qemu/qemu-print.h"
 #include "qemu/main-loop.h"
 #include "qemu/option.h"
-#include "qemu/keyval.h"
 #include "qapi/error.h"
 #include "qapi/opts-visitor.h"
 #include "sysemu/runstate.h"
 #include "net/colo-compare.h"
 #include "net/filter.h"
 #include "qapi/string-output-visitor.h"
-#include "qapi/qobject-input-visitor.h"
 
 /* Net bridge is currently not supported for W32. */
 #if !defined(_WIN32)
@@ -65,60 +63,18 @@
 static VMChangeStateEntry *net_change_state_entry;
 static QTAILQ_HEAD(, NetClientState) net_clients;
 
-typedef struct NetdevQueueEntry {
-    Netdev *nd;
-    Location loc;
-    QSIMPLEQ_ENTRY(NetdevQueueEntry) entry;
-} NetdevQueueEntry;
-
-typedef QSIMPLEQ_HEAD(, NetdevQueueEntry) NetdevQueue;
-
-static NetdevQueue nd_queue = QSIMPLEQ_HEAD_INITIALIZER(nd_queue);
-
 /***********************************************************/
 /* network device redirectors */
-
-int convert_host_port(struct sockaddr_in *saddr, const char *host,
-                      const char *port, Error **errp)
-{
-    struct hostent *he;
-    const char *r;
-    long p;
-
-    memset(saddr, 0, sizeof(*saddr));
-
-    saddr->sin_family = AF_INET;
-    if (host[0] == '\0') {
-        saddr->sin_addr.s_addr = 0;
-    } else {
-        if (qemu_isdigit(host[0])) {
-            if (!inet_aton(host, &saddr->sin_addr)) {
-                error_setg(errp, "host address '%s' is not a valid "
-                           "IPv4 address", host);
-                return -1;
-            }
-        } else {
-            he = gethostbyname(host);
-            if (he == NULL) {
-                error_setg(errp, "can't resolve host address '%s'", host);
-                return -1;
-            }
-            saddr->sin_addr = *(struct in_addr *)he->h_addr;
-        }
-    }
-    if (qemu_strtol(port, &r, 0, &p) != 0) {
-        error_setg(errp, "port number '%s' is invalid", port);
-        return -1;
-    }
-    saddr->sin_port = htons(p);
-    return 0;
-}
 
 int parse_host_port(struct sockaddr_in *saddr, const char *str,
                     Error **errp)
 {
     gchar **substrings;
-    int ret;
+    struct hostent *he;
+    const char *addr, *p, *r;
+    int port, ret = 0;
+
+    memset(saddr, 0, sizeof(*saddr));
 
     substrings = g_strsplit(str, ":", 2);
     if (!substrings || !substrings[0] || !substrings[1]) {
@@ -128,7 +84,37 @@ int parse_host_port(struct sockaddr_in *saddr, const char *str,
         goto out;
     }
 
-    ret = convert_host_port(saddr, substrings[0], substrings[1], errp);
+    addr = substrings[0];
+    p = substrings[1];
+
+    saddr->sin_family = AF_INET;
+    if (addr[0] == '\0') {
+        saddr->sin_addr.s_addr = 0;
+    } else {
+        if (qemu_isdigit(addr[0])) {
+            if (!inet_aton(addr, &saddr->sin_addr)) {
+                error_setg(errp, "host address '%s' is not a valid "
+                           "IPv4 address", addr);
+                ret = -1;
+                goto out;
+            }
+        } else {
+            he = gethostbyname(addr);
+            if (he == NULL) {
+                error_setg(errp, "can't resolve host address '%s'", addr);
+                ret = -1;
+                goto out;
+            }
+            saddr->sin_addr = *(struct in_addr *)he->h_addr;
+        }
+    }
+    port = strtol(p, (char **)&r, 0);
+    if (r == p) {
+        error_setg(errp, "port number '%s' is invalid", p);
+        ret = -1;
+        goto out;
+    }
+    saddr->sin_port = htons(port);
 
 out:
     g_strfreev(substrings);
@@ -142,20 +128,13 @@ char *qemu_mac_strdup_printf(const uint8_t *macaddr)
                            macaddr[3], macaddr[4], macaddr[5]);
 }
 
-void qemu_set_info_str(NetClientState *nc, const char *fmt, ...)
-{
-    va_list ap;
-
-    va_start(ap, fmt);
-    vsnprintf(nc->info_str, sizeof(nc->info_str), fmt, ap);
-    va_end(ap);
-}
-
 void qemu_format_nic_info_str(NetClientState *nc, uint8_t macaddr[6])
 {
-    qemu_set_info_str(nc, "model=%s,macaddr=%02x:%02x:%02x:%02x:%02x:%02x",
-                      nc->model, macaddr[0], macaddr[1], macaddr[2],
-                      macaddr[3], macaddr[4], macaddr[5]);
+    snprintf(nc->info_str, sizeof(nc->info_str),
+             "model=%s,macaddr=%02x:%02x:%02x:%02x:%02x:%02x",
+             nc->model,
+             macaddr[0], macaddr[1], macaddr[2],
+             macaddr[3], macaddr[4], macaddr[5]);
 }
 
 static int mac_table[256] = {0};
@@ -1022,8 +1001,6 @@ static int (* const net_client_init_fun[NET_CLIENT_DRIVER__MAX])(
 #endif
         [NET_CLIENT_DRIVER_TAP]       = net_init_tap,
         [NET_CLIENT_DRIVER_SOCKET]    = net_init_socket,
-        [NET_CLIENT_DRIVER_STREAM]    = net_init_stream,
-        [NET_CLIENT_DRIVER_DGRAM]     = net_init_dgram,
 #ifdef CONFIG_VDE
         [NET_CLIENT_DRIVER_VDE]       = net_init_vde,
 #endif
@@ -1059,23 +1036,19 @@ static int net_client_init1(const Netdev *netdev, bool is_netdev, Error **errp)
     if (is_netdev) {
         if (netdev->type == NET_CLIENT_DRIVER_NIC ||
             !net_client_init_fun[netdev->type]) {
-            error_setg(errp, "network backend '%s' is not compiled into this binary",
-                       NetClientDriver_str(netdev->type));
+            error_setg(errp, QERR_INVALID_PARAMETER_VALUE, "type",
+                       "a netdev backend type");
             return -1;
         }
     } else {
         if (netdev->type == NET_CLIENT_DRIVER_NONE) {
             return 0; /* nothing to do */
         }
-        if (netdev->type == NET_CLIENT_DRIVER_HUBPORT) {
-            error_setg(errp, "network backend '%s' is only supported with -netdev/-nic",
-                       NetClientDriver_str(netdev->type));
-            return -1;
-        }
-
-        if (!net_client_init_fun[netdev->type]) {
-            error_setg(errp, "network backend '%s' is not compiled into this binary",
-                       NetClientDriver_str(netdev->type));
+        if (netdev->type == NET_CLIENT_DRIVER_HUBPORT ||
+            !net_client_init_fun[netdev->type]) {
+            error_setg(errp, QERR_INVALID_PARAMETER_VALUE, "type",
+                       "a net backend type (maybe it is not compiled "
+                       "into this binary)");
             return -1;
         }
 
@@ -1115,8 +1088,6 @@ void show_netdevs(void)
     int idx;
     const char *available_netdevs[] = {
         "socket",
-        "stream",
-        "dgram",
         "hubport",
         "tap",
 #ifdef CONFIG_SLIRP
@@ -1589,97 +1560,36 @@ out:
     return ret;
 }
 
-static void netdev_init_modern(void)
-{
-    while (!QSIMPLEQ_EMPTY(&nd_queue)) {
-        NetdevQueueEntry *nd = QSIMPLEQ_FIRST(&nd_queue);
-
-        QSIMPLEQ_REMOVE_HEAD(&nd_queue, entry);
-        loc_push_restore(&nd->loc);
-        net_client_init1(nd->nd, true, &error_fatal);
-        loc_pop(&nd->loc);
-        qapi_free_Netdev(nd->nd);
-        g_free(nd);
-    }
-}
-
-void net_init_clients(void)
+int net_init_clients(Error **errp)
 {
     net_change_state_entry =
         qemu_add_vm_change_state_handler(net_vm_change_state_handler, NULL);
 
     QTAILQ_INIT(&net_clients);
 
-    netdev_init_modern();
-
-    qemu_opts_foreach(qemu_find_opts("netdev"), net_init_netdev, NULL,
-                      &error_fatal);
-
-    qemu_opts_foreach(qemu_find_opts("nic"), net_param_nic, NULL,
-                      &error_fatal);
-
-    qemu_opts_foreach(qemu_find_opts("net"), net_init_client, NULL,
-                      &error_fatal);
-}
-
-/*
- * Does this -netdev argument use modern rather than traditional syntax?
- * Modern syntax is to be parsed with netdev_parse_modern().
- * Traditional syntax is to be parsed with net_client_parse().
- */
-bool netdev_is_modern(const char *optarg)
-{
-    QemuOpts *opts;
-    bool is_modern;
-    const char *type;
-    static QemuOptsList dummy_opts = {
-        .name = "netdev",
-        .implied_opt_name = "type",
-        .head = QTAILQ_HEAD_INITIALIZER(dummy_opts.head),
-        .desc = { { } },
-    };
-
-    if (optarg[0] == '{') {
-        /* This is JSON, which means it's modern syntax */
-        return true;
+    if (qemu_opts_foreach(qemu_find_opts("netdev"),
+                          net_init_netdev, NULL, errp)) {
+        return -1;
     }
 
-    opts = qemu_opts_create(&dummy_opts, NULL, false, &error_abort);
-    qemu_opts_do_parse(opts, optarg, dummy_opts.implied_opt_name,
-                       &error_abort);
-    type = qemu_opt_get(opts, "type");
-    is_modern = !g_strcmp0(type, "stream") || !g_strcmp0(type, "dgram");
+    if (qemu_opts_foreach(qemu_find_opts("nic"), net_param_nic, NULL, errp)) {
+        return -1;
+    }
 
-    qemu_opts_reset(&dummy_opts);
+    if (qemu_opts_foreach(qemu_find_opts("net"), net_init_client, NULL, errp)) {
+        return -1;
+    }
 
-    return is_modern;
+    return 0;
 }
 
-/*
- * netdev_parse_modern() uses modern, more expressive syntax than
- * net_client_parse(), but supports only the -netdev option.
- * netdev_parse_modern() appends to @nd_queue, whereas net_client_parse()
- * appends to @qemu_netdev_opts.
- */
-void netdev_parse_modern(const char *optarg)
-{
-    Visitor *v;
-    NetdevQueueEntry *nd;
-
-    v = qobject_input_visitor_new_str(optarg, "type", &error_fatal);
-    nd = g_new(NetdevQueueEntry, 1);
-    visit_type_Netdev(v, NULL, &nd->nd, &error_fatal);
-    visit_free(v);
-    loc_save(&nd->loc);
-
-    QSIMPLEQ_INSERT_TAIL(&nd_queue, nd, entry);
-}
-
-void net_client_parse(QemuOptsList *opts_list, const char *optarg)
+int net_client_parse(QemuOptsList *opts_list, const char *optarg)
 {
     if (!qemu_opts_parse_noisily(opts_list, optarg, true)) {
-        exit(1);
+        return -1;
     }
+
+    return 0;
 }
 
 /* From FreeBSD */

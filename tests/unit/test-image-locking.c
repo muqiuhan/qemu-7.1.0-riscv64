@@ -76,10 +76,10 @@ static void check_locked_bytes(int fd, uint64_t perm_locks,
 static void test_image_locking_basic(void)
 {
     BlockBackend *blk1, *blk2, *blk3;
-    g_autofree char *img_path = NULL;
+    char img_path[] = "/tmp/qtest.XXXXXX";
     uint64_t perm, shared_perm;
 
-    int fd = g_file_open_tmp("qemu-tst-img-lock.XXXXXX", &img_path, NULL);
+    int fd = mkstemp(img_path);
     assert(fd >= 0);
 
     perm = BLK_PERM_WRITE | BLK_PERM_CONSISTENT_READ;
@@ -117,10 +117,10 @@ static void test_image_locking_basic(void)
 static void test_set_perm_abort(void)
 {
     BlockBackend *blk1, *blk2;
-    g_autofree char *img_path = NULL;
+    char img_path[] = "/tmp/qtest.XXXXXX";
     uint64_t perm, shared_perm;
     int r;
-    int fd = g_file_open_tmp("qemu-tst-img-lock.XXXXXX", &img_path, NULL);
+    int fd = mkstemp(img_path);
     assert(fd >= 0);
 
     perm = BLK_PERM_WRITE | BLK_PERM_CONSISTENT_READ;
@@ -140,8 +140,6 @@ static void test_set_perm_abort(void)
     check_locked_bytes(fd, perm, ~shared_perm);
     blk_unref(blk1);
     blk_unref(blk2);
-    close(fd);
-    unlink(img_path);
 }
 
 int main(int argc, char **argv)

@@ -50,6 +50,9 @@
 #define QERR_MISSING_PARAMETER \
     "Parameter '%s' is missing"
 
+#define QERR_PERMISSION_DENIED \
+    "Insufficient permission to perform this operation"
+
 #define QERR_PROPERTY_VALUE_BAD \
     "Property '%s.%s' doesn't take value '%s'"
 

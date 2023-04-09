@@ -168,19 +168,14 @@ Enabling TPM
 
 A TPM device can be connected to the virt board by following the steps below.
 
-First launch the TPM emulator:
+First launch the TPM emulator
 
-.. code-block:: bash
-
-  $ swtpm socket --tpm2 -t -d --tpmstate dir=/tmp/tpm \
+    swtpm socket --tpm2 -t -d --tpmstate dir=/tmp/tpm \
         --ctrl type=unixio,path=swtpm-sock
 
-Then launch QEMU with some additional arguments to link a TPM device to the backend:
+Then launch QEMU with:
 
-.. code-block:: bash
-
-  $ qemu-system-riscv64 \
-    ... other args .... \
+    ...
     -chardev socket,id=chrtpm,path=swtpm-sock \
     -tpmdev emulator,id=tpm0,chardev=chrtpm \
     -device tpm-tis-device,tpmdev=tpm0

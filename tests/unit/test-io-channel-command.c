@@ -19,34 +19,37 @@
  */
 
 #include "qemu/osdep.h"
-#include <glib/gstdio.h>
 #include "io/channel-command.h"
 #include "io-channel-helpers.h"
 #include "qapi/error.h"
 #include "qemu/module.h"
 
-#define TEST_FIFO "test-io-channel-command.fifo"
-
-static char *socat = NULL;
-
+#ifndef WIN32
 static void test_io_channel_command_fifo(bool async)
 {
-    g_autofree gchar *tmpdir = g_dir_make_tmp("qemu-test-io-channel.XXXXXX", NULL);
-    g_autofree gchar *fifo = g_strdup_printf("%s/%s", tmpdir, TEST_FIFO);
-    g_autofree gchar *srcargs = g_strdup_printf("%s - PIPE:%s,wronly", socat, fifo);
-    g_autofree gchar *dstargs = g_strdup_printf("%s PIPE:%s,rdonly -", socat, fifo);
-    g_auto(GStrv) srcargv = g_strsplit(srcargs, " ", -1);
-    g_auto(GStrv) dstargv = g_strsplit(dstargs, " ", -1);
+#define TEST_FIFO "tests/test-io-channel-command.fifo"
     QIOChannel *src, *dst;
     QIOChannelTest *test;
+    const char *srcfifo = "PIPE:" TEST_FIFO ",wronly";
+    const char *dstfifo = "PIPE:" TEST_FIFO ",rdonly";
+    const char *srcargv[] = {
+        "/bin/socat", "-", srcfifo, NULL,
+    };
+    const char *dstargv[] = {
+        "/bin/socat", dstfifo, "-", NULL,
+    };
 
-    src = QIO_CHANNEL(qio_channel_command_new_spawn((const char **) srcargv,
+    unlink(TEST_FIFO);
+    if (access("/bin/socat", X_OK) < 0) {
+        return; /* Pretend success if socat is not present */
+    }
+    if (mkfifo(TEST_FIFO, 0600) < 0) {
+        abort();
+    }
+    src = QIO_CHANNEL(qio_channel_command_new_spawn(srcargv,
                                                     O_WRONLY,
                                                     &error_abort));
-    /* try to avoid a race to create the socket */
-    g_usleep(1000);
-
-    dst = QIO_CHANNEL(qio_channel_command_new_spawn((const char **) dstargv,
+    dst = QIO_CHANNEL(qio_channel_command_new_spawn(dstargv,
                                                     O_RDONLY,
                                                     &error_abort));
 
@@ -57,27 +60,17 @@ static void test_io_channel_command_fifo(bool async)
     object_unref(OBJECT(src));
     object_unref(OBJECT(dst));
 
-    g_rmdir(tmpdir);
+    unlink(TEST_FIFO);
 }
 
 
 static void test_io_channel_command_fifo_async(void)
 {
-    if (!socat) {
-        g_test_skip("socat is not found in PATH");
-        return;
-    }
-
     test_io_channel_command_fifo(true);
 }
 
 static void test_io_channel_command_fifo_sync(void)
 {
-    if (!socat) {
-        g_test_skip("socat is not found in PATH");
-        return;
-    }
-
     test_io_channel_command_fifo(false);
 }
 
@@ -87,12 +80,11 @@ static void test_io_channel_command_echo(bool async)
     QIOChannel *ioc;
     QIOChannelTest *test;
     const char *socatargv[] = {
-        socat, "-", "-", NULL,
+        "/bin/socat", "-", "-", NULL,
     };
 
-    if (!socat) {
-        g_test_skip("socat is not found in PATH");
-        return;
+    if (access("/bin/socat", X_OK) < 0) {
+        return; /* Pretend success if socat is not present */
     }
 
     ioc = QIO_CHANNEL(qio_channel_command_new_spawn(socatargv,
@@ -115,6 +107,7 @@ static void test_io_channel_command_echo_sync(void)
 {
     test_io_channel_command_echo(false);
 }
+#endif
 
 int main(int argc, char **argv)
 {
@@ -122,8 +115,7 @@ int main(int argc, char **argv)
 
     g_test_init(&argc, &argv, NULL);
 
-    socat = g_find_program_in_path("socat");
-
+#ifndef WIN32
     g_test_add_func("/io/channel/command/fifo/sync",
                     test_io_channel_command_fifo_sync);
     g_test_add_func("/io/channel/command/fifo/async",
@@ -132,6 +124,7 @@ int main(int argc, char **argv)
                     test_io_channel_command_echo_sync);
     g_test_add_func("/io/channel/command/echo/async",
                     test_io_channel_command_echo_async);
+#endif
 
     return g_test_run();
 }

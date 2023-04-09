@@ -26,8 +26,11 @@ static int blkreplay_open(BlockDriverState *bs, QDict *options, int flags,
     int ret;
 
     /* Open the image file */
-    ret = bdrv_open_file_child(NULL, options, "image", bs, errp);
-    if (ret < 0) {
+    bs->file = bdrv_open_child(NULL, options, "image", bs, &child_of_bds,
+                               BDRV_CHILD_FILTERED | BDRV_CHILD_PRIMARY,
+                               false, errp);
+    if (!bs->file) {
+        ret = -EINVAL;
         goto fail;
     }
 

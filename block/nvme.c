@@ -293,40 +293,32 @@ static void nvme_kick(NVMeQueuePair *q)
     q->need_kick = 0;
 }
 
-static NVMeRequest *nvme_get_free_req_nofail_locked(NVMeQueuePair *q)
+/* Find a free request element if any, otherwise:
+ * a) if in coroutine context, try to wait for one to become available;
+ * b) if not in coroutine, return NULL;
+ */
+static NVMeRequest *nvme_get_free_req(NVMeQueuePair *q)
 {
     NVMeRequest *req;
+
+    qemu_mutex_lock(&q->lock);
+
+    while (q->free_req_head == -1) {
+        if (qemu_in_coroutine()) {
+            trace_nvme_free_req_queue_wait(q->s, q->index);
+            qemu_co_queue_wait(&q->free_req_queue, &q->lock);
+        } else {
+            qemu_mutex_unlock(&q->lock);
+            return NULL;
+        }
+    }
 
     req = &q->reqs[q->free_req_head];
     q->free_req_head = req->free_req_next;
     req->free_req_next = -1;
+
+    qemu_mutex_unlock(&q->lock);
     return req;
-}
-
-/* Return a free request element if any, otherwise return NULL.  */
-static NVMeRequest *nvme_get_free_req_nowait(NVMeQueuePair *q)
-{
-    QEMU_LOCK_GUARD(&q->lock);
-    if (q->free_req_head == -1) {
-        return NULL;
-    }
-    return nvme_get_free_req_nofail_locked(q);
-}
-
-/*
- * Wait for a free request to become available if necessary, then
- * return it.
- */
-static coroutine_fn NVMeRequest *nvme_get_free_req(NVMeQueuePair *q)
-{
-    QEMU_LOCK_GUARD(&q->lock);
-
-    while (q->free_req_head == -1) {
-        trace_nvme_free_req_queue_wait(q->s, q->index);
-        qemu_co_queue_wait(&q->free_req_queue, &q->lock);
-    }
-
-    return nvme_get_free_req_nofail_locked(q);
 }
 
 /* With q->lock */
@@ -514,7 +506,7 @@ static int nvme_admin_cmd_sync(BlockDriverState *bs, NvmeCmd *cmd)
     AioContext *aio_context = bdrv_get_aio_context(bs);
     NVMeRequest *req;
     int ret = -EINPROGRESS;
-    req = nvme_get_free_req_nowait(q);
+    req = nvme_get_free_req(q);
     if (!req) {
         return -EBUSY;
     }
@@ -1242,10 +1234,8 @@ static inline bool nvme_qiov_aligned(BlockDriverState *bs,
     return true;
 }
 
-static coroutine_fn int nvme_co_prw(BlockDriverState *bs,
-                                    uint64_t offset, uint64_t bytes,
-                                    QEMUIOVector *qiov, bool is_write,
-                                    int flags)
+static int nvme_co_prw(BlockDriverState *bs, uint64_t offset, uint64_t bytes,
+                       QEMUIOVector *qiov, bool is_write, int flags)
 {
     BDRVNVMeState *s = bs->opaque;
     int r;
@@ -1587,22 +1577,22 @@ static void nvme_aio_unplug(BlockDriverState *bs)
     }
 }
 
-static bool nvme_register_buf(BlockDriverState *bs, void *host, size_t size,
-                              Error **errp)
+static void nvme_register_buf(BlockDriverState *bs, void *host, size_t size)
 {
     int ret;
+    Error *local_err = NULL;
     BDRVNVMeState *s = bs->opaque;
 
-    /*
-     * FIXME: we may run out of IOVA addresses after repeated
-     * bdrv_register_buf/bdrv_unregister_buf, because nvme_vfio_dma_unmap
-     * doesn't reclaim addresses for fixed mappings.
-     */
-    ret = qemu_vfio_dma_map(s->vfio, host, size, false, NULL, errp);
-    return ret == 0;
+    ret = qemu_vfio_dma_map(s->vfio, host, size, false, NULL, &local_err);
+    if (ret) {
+        /* FIXME: we may run out of IOVA addresses after repeated
+         * bdrv_register_buf/bdrv_unregister_buf, because nvme_vfio_dma_unmap
+         * doesn't reclaim addresses for fixed mappings. */
+        error_reportf_err(local_err, "nvme_register_buf failed: ");
+    }
 }
 
-static void nvme_unregister_buf(BlockDriverState *bs, void *host, size_t size)
+static void nvme_unregister_buf(BlockDriverState *bs, void *host)
 {
     BDRVNVMeState *s = bs->opaque;
 

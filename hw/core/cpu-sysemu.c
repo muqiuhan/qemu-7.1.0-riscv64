@@ -69,10 +69,11 @@ hwaddr cpu_get_phys_page_debug(CPUState *cpu, vaddr addr)
 
 int cpu_asidx_from_attrs(CPUState *cpu, MemTxAttrs attrs)
 {
+    CPUClass *cc = CPU_GET_CLASS(cpu);
     int ret = 0;
 
-    if (cpu->cc->sysemu_ops->asidx_from_attrs) {
-        ret = cpu->cc->sysemu_ops->asidx_from_attrs(cpu, attrs);
+    if (cc->sysemu_ops->asidx_from_attrs) {
+        ret = cc->sysemu_ops->asidx_from_attrs(cpu, attrs);
         assert(ret < cpu->num_ases && ret >= 0);
     }
     return ret;

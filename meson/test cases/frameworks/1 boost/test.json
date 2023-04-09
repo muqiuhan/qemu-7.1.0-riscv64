@@ -17,6 +17,5 @@
       { "static": "false", "b_vscrt": "mt"  },
       { "static": "false", "b_vscrt": "mtd" }
     ]
-  },
-  "skip_on_jobname": ["azure", "msys2"]
+  }
 }

@@ -186,14 +186,6 @@ void QEMU_ERROR("code path is reachable")
 #define qemu_build_not_reached()  g_assert_not_reached()
 #endif
 
-/**
- * qemu_build_assert()
- *
- * The compiler, during optimization, is expected to prove that the
- * assertion is true.
- */
-#define qemu_build_assert(test)  while (!(test)) qemu_build_not_reached()
-
 /*
  * According to waitpid man page:
  * WCOREDUMP
@@ -576,23 +568,8 @@ unsigned long qemu_getauxval(unsigned long type);
 
 void qemu_set_tty_echo(int fd, bool echo);
 
-typedef struct ThreadContext ThreadContext;
-
-/**
- * qemu_prealloc_mem:
- * @fd: the fd mapped into the area, -1 for anonymous memory
- * @area: start address of the are to preallocate
- * @sz: the size of the area to preallocate
- * @max_threads: maximum number of threads to use
- * @errp: returns an error if this function fails
- *
- * Preallocate memory (populate/prefault page tables writable) for the virtual
- * memory area starting at @area with the size of @sz. After a successful call,
- * each page in the area was faulted in writable at least once, for example,
- * after allocating file blocks for mapped files.
- */
-void qemu_prealloc_mem(int fd, char *area, size_t sz, int max_threads,
-                       ThreadContext *tc, Error **errp);
+void os_mem_prealloc(int fd, char *area, size_t sz, int smp_cpus,
+                     Error **errp);
 
 /**
  * qemu_get_pid_name:

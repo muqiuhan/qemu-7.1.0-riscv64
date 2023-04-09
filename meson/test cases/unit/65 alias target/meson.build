@@ -13,5 +13,3 @@ custom_target = custom_target('custom-target',
 )
 
 alias_target('build-all', [exe_target, custom_target])
-
-subdir('subdir')

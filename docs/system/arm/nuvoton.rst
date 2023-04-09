@@ -82,9 +82,9 @@ Boot options
 
 The Nuvoton machines can boot from an OpenBMC firmware image, or directly into
 a kernel using the ``-kernel`` option. OpenBMC images for ``quanta-gsj`` and
-possibly others can be downloaded from the OpenBMC jenkins :
+possibly others can be downloaded from the OpenPOWER jenkins :
 
-   https://jenkins.openbmc.org/
+   https://openpower.xyz/
 
 The firmware image should be attached as an MTD drive. Example :
 

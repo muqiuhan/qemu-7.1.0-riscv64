@@ -35,7 +35,6 @@ stages:
 .build_container_template:
   image: docker:stable
   stage: containers
-  interruptible: false
   services:
     - docker:dind
   before_script:
@@ -60,7 +59,6 @@ stages:
     - when: never
 
 .test_template:
-  interruptible: true
   rules:
     - <<: *job_rules_merge_request
     - <<: *job_rules_opt_in
@@ -70,7 +68,6 @@ stages:
   extends: .test_template
   image: docker:stable
   stage: sanity_checks
-  interruptible: true
   services:
     - docker:dind
   before_script:

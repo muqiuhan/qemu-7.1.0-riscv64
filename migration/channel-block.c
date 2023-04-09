@@ -62,8 +62,7 @@ qio_channel_block_readv(QIOChannel *ioc,
     qemu_iovec_init_external(&qiov, (struct iovec *)iov, niov);
     ret = bdrv_readv_vmstate(bioc->bs, &qiov, bioc->offset);
     if (ret < 0) {
-        error_setg_errno(errp, -ret, "bdrv_readv_vmstate failed");
-        return -1;
+        return ret;
     }
 
     bioc->offset += qiov.size;
@@ -87,8 +86,7 @@ qio_channel_block_writev(QIOChannel *ioc,
     qemu_iovec_init_external(&qiov, (struct iovec *)iov, niov);
     ret = bdrv_writev_vmstate(bioc->bs, &qiov, bioc->offset);
     if (ret < 0) {
-        error_setg_errno(errp, -ret, "bdrv_writev_vmstate failed");
-        return -1;
+        return ret;
     }
 
     bioc->offset += qiov.size;

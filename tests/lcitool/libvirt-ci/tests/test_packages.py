@@ -8,9 +8,6 @@ import pytest
 
 import test_utils.utils as test_utils
 
-from collections import namedtuple
-from functools import total_ordering
-
 from pathlib import Path
 from lcitool import util
 from lcitool.inventory import Inventory
@@ -102,42 +99,34 @@ def test_cross_platform_arch_mismatch(test_project, target, arch):
                                   cross_arch=arch)
 
 
-@total_ordering
-class MappingKey(namedtuple('MappingKey', ['components', 'priority'])):
-    def __str__(self):
-        return "".join(self.components)
-
-    def __hash__(self):
-        return hash(self.components)
-
-    def __eq__(self, other):
-        return isinstance(other, MappingKey) and \
-            self.priority == other.priority and \
-            self.components == other.components
-
-    def __lt__(self, other):
-        if self.priority < other.priority:
-            return True
-        if self.priority > other.priority:
-            return False
-
-        return self.components < other.components
-
-
 def mapping_keys_product():
-    basekeys = set()
+    formats = []
+    names = []
+    vers = {}
 
-    basekeys.add(MappingKey(("default", ), 0))
     for target, facts in Inventory().target_facts.items():
         fmt = facts["packaging"]["format"]
         name = facts["os"]["name"]
         ver = facts["os"]["version"]
 
-        basekeys.add(MappingKey((fmt, ), 1))
-        basekeys.add(MappingKey((name, ), 2))
-        basekeys.add(MappingKey((name, ver), 3))
+        if fmt not in formats:
+            formats.append(fmt)
 
-    basekeys = [str(x) for x in sorted(basekeys)]
+        if name not in names:
+            names.append(name)
+
+        if name not in vers:
+            vers[name] = []
+        vers[name].append(ver)
+
+    formats = sorted(formats)
+    names = sorted(names)
+
+    namevers = []
+    for name in names:
+        namevers.extend(sorted([name + v for v in vers[name]]))
+
+    basekeys = ["default"] + formats + names + namevers
     crosspolicykeys = ["cross-policy-" + k for k in basekeys]
     archkeys = []
     crossarchkeys = []

@@ -753,18 +753,12 @@ static void qtest_process_command(CharBackend *chr, gchar **words)
         qtest_sendf(chr, "OK %"PRIi64"\n",
                     (int64_t)qemu_clock_get_ns(QEMU_CLOCK_VIRTUAL));
     } else if (strcmp(words[0], "module_load") == 0) {
-        Error *local_err = NULL;
-        int rv;
         g_assert(words[1] && words[2]);
 
         qtest_send_prefix(chr);
-        rv = module_load(words[1], words[2], &local_err);
-        if (rv > 0) {
+        if (module_load_one(words[1], words[2], false)) {
             qtest_sendf(chr, "OK\n");
         } else {
-            if (rv < 0) {
-                error_report_err(local_err);
-            }
             qtest_sendf(chr, "FAIL\n");
         }
     } else if (qtest_enabled() && strcmp(words[0], "clock_set") == 0) {
@@ -983,7 +977,7 @@ static void qtest_set_log(Object *obj, const char *value, Error **errp)
     QTest *q = QTEST(obj);
 
     if (qtest == q) {
-        error_setg(errp, "Property 'log' can not be set now");
+        error_setg(errp, QERR_PERMISSION_DENIED);
     } else {
         g_free(q->log);
         q->log = g_strdup(value);
@@ -1003,7 +997,7 @@ static void qtest_set_chardev(Object *obj, const char *value, Error **errp)
     Chardev *chr;
 
     if (qtest == q) {
-        error_setg(errp, "Property 'chardev' can not be set now");
+        error_setg(errp, QERR_PERMISSION_DENIED);
         return;
     }
 

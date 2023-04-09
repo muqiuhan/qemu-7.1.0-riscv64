@@ -176,7 +176,6 @@ static void vhost_vdpa_listener_commit(MemoryListener *listener)
 static void vhost_vdpa_listener_region_add(MemoryListener *listener,
                                            MemoryRegionSection *section)
 {
-    DMAMap mem_region = {};
     struct vhost_vdpa *v = container_of(listener, struct vhost_vdpa, listener);
     hwaddr iova;
     Int128 llend, llsize;
@@ -213,13 +212,13 @@ static void vhost_vdpa_listener_region_add(MemoryListener *listener,
 
     llsize = int128_sub(llend, int128_make64(iova));
     if (v->shadow_vqs_enabled) {
-        int r;
+        DMAMap mem_region = {
+            .translated_addr = (hwaddr)(uintptr_t)vaddr,
+            .size = int128_get64(llsize) - 1,
+            .perm = IOMMU_ACCESS_FLAG(true, section->readonly),
+        };
 
-        mem_region.translated_addr = (hwaddr)(uintptr_t)vaddr,
-        mem_region.size = int128_get64(llsize) - 1,
-        mem_region.perm = IOMMU_ACCESS_FLAG(true, section->readonly),
-
-        r = vhost_iova_tree_map_alloc(v->iova_tree, &mem_region);
+        int r = vhost_iova_tree_map_alloc(v->iova_tree, &mem_region);
         if (unlikely(r != IOVA_OK)) {
             error_report("Can't allocate a mapping (%d)", r);
             goto fail;
@@ -233,15 +232,10 @@ static void vhost_vdpa_listener_region_add(MemoryListener *listener,
                              vaddr, section->readonly);
     if (ret) {
         error_report("vhost vdpa map fail!");
-        goto fail_map;
+        goto fail;
     }
 
     return;
-
-fail_map:
-    if (v->shadow_vqs_enabled) {
-        vhost_iova_tree_remove(v->iova_tree, mem_region);
-    }
 
 fail:
     /*
@@ -295,12 +289,8 @@ static void vhost_vdpa_listener_region_del(MemoryListener *listener,
         };
 
         result = vhost_iova_tree_find_iova(v->iova_tree, &mem_region);
-        if (!result) {
-            /* The memory listener map wasn't mapped */
-            return;
-        }
         iova = result->iova;
-        vhost_iova_tree_remove(v->iova_tree, *result);
+        vhost_iova_tree_remove(v->iova_tree, result);
     }
     vhost_vdpa_iotlb_batch_begin_once(v);
     ret = vhost_vdpa_dma_unmap(v, iova, int128_get64(llsize));
@@ -884,41 +874,41 @@ static int vhost_vdpa_svq_set_fds(struct vhost_dev *dev,
 /**
  * Unmap a SVQ area in the device
  */
-static void vhost_vdpa_svq_unmap_ring(struct vhost_vdpa *v, hwaddr addr)
+static bool vhost_vdpa_svq_unmap_ring(struct vhost_vdpa *v,
+                                      const DMAMap *needle)
 {
-    const DMAMap needle = {
-        .translated_addr = addr,
-    };
-    const DMAMap *result = vhost_iova_tree_find_iova(v->iova_tree, &needle);
+    const DMAMap *result = vhost_iova_tree_find_iova(v->iova_tree, needle);
     hwaddr size;
     int r;
 
     if (unlikely(!result)) {
         error_report("Unable to find SVQ address to unmap");
-        return;
+        return false;
     }
 
     size = ROUND_UP(result->size, qemu_real_host_page_size());
     r = vhost_vdpa_dma_unmap(v, result->iova, size);
-    if (unlikely(r < 0)) {
-        error_report("Unable to unmap SVQ vring: %s (%d)", g_strerror(-r), -r);
-        return;
-    }
-
-    vhost_iova_tree_remove(v->iova_tree, *result);
+    return r == 0;
 }
 
-static void vhost_vdpa_svq_unmap_rings(struct vhost_dev *dev,
+static bool vhost_vdpa_svq_unmap_rings(struct vhost_dev *dev,
                                        const VhostShadowVirtqueue *svq)
 {
+    DMAMap needle = {};
     struct vhost_vdpa *v = dev->opaque;
     struct vhost_vring_addr svq_addr;
+    bool ok;
 
     vhost_svq_get_vring_addr(svq, &svq_addr);
 
-    vhost_vdpa_svq_unmap_ring(v, svq_addr.desc_user_addr);
+    needle.translated_addr = svq_addr.desc_user_addr;
+    ok = vhost_vdpa_svq_unmap_ring(v, &needle);
+    if (unlikely(!ok)) {
+        return false;
+    }
 
-    vhost_vdpa_svq_unmap_ring(v, svq_addr.used_user_addr);
+    needle.translated_addr = svq_addr.used_user_addr;
+    return vhost_vdpa_svq_unmap_ring(v, &needle);
 }
 
 /**
@@ -944,7 +934,7 @@ static bool vhost_vdpa_svq_map_ring(struct vhost_vdpa *v, DMAMap *needle,
                            needle->perm == IOMMU_RO);
     if (unlikely(r != 0)) {
         error_setg_errno(errp, -r, "Cannot map region to device");
-        vhost_iova_tree_remove(v->iova_tree, *needle);
+        vhost_iova_tree_remove(v->iova_tree, needle);
     }
 
     return r == 0;
@@ -996,7 +986,7 @@ static bool vhost_vdpa_svq_map_rings(struct vhost_dev *dev,
     ok = vhost_vdpa_svq_map_ring(v, &device_region, errp);
     if (unlikely(!ok)) {
         error_prepend(errp, "Cannot create vq device region: ");
-        vhost_vdpa_svq_unmap_ring(v, driver_region.translated_addr);
+        vhost_vdpa_svq_unmap_ring(v, &driver_region);
     }
     addr->used_user_addr = device_region.iova;
 
@@ -1031,6 +1021,13 @@ static bool vhost_vdpa_svqs_start(struct vhost_dev *dev)
 
     if (!v->shadow_vqs) {
         return true;
+    }
+
+    if (v->migration_blocker) {
+        int r = migrate_add_blocker(v->migration_blocker, &err);
+        if (unlikely(r < 0)) {
+            return false;
+        }
     }
 
     for (i = 0; i < v->shadow_vqs->len; ++i) {
@@ -1075,21 +1072,33 @@ err:
         vhost_svq_stop(svq);
     }
 
+    if (v->migration_blocker) {
+        migrate_del_blocker(v->migration_blocker);
+    }
+
     return false;
 }
 
-static void vhost_vdpa_svqs_stop(struct vhost_dev *dev)
+static bool vhost_vdpa_svqs_stop(struct vhost_dev *dev)
 {
     struct vhost_vdpa *v = dev->opaque;
 
     if (!v->shadow_vqs) {
-        return;
+        return true;
     }
 
     for (unsigned i = 0; i < v->shadow_vqs->len; ++i) {
         VhostShadowVirtqueue *svq = g_ptr_array_index(v->shadow_vqs, i);
-        vhost_vdpa_svq_unmap_rings(dev, svq);
+        bool ok = vhost_vdpa_svq_unmap_rings(dev, svq);
+        if (unlikely(!ok)) {
+            return false;
+        }
     }
+
+    if (v->migration_blocker) {
+        migrate_del_blocker(v->migration_blocker);
+    }
+    return true;
 }
 
 static int vhost_vdpa_dev_start(struct vhost_dev *dev, bool started)
@@ -1106,7 +1115,10 @@ static int vhost_vdpa_dev_start(struct vhost_dev *dev, bool started)
         }
         vhost_vdpa_set_vring_ready(dev);
     } else {
-        vhost_vdpa_svqs_stop(dev);
+        ok = vhost_vdpa_svqs_stop(dev);
+        if (unlikely(!ok)) {
+            return -1;
+        }
         vhost_vdpa_host_notifiers_uninit(dev, dev->nvqs);
     }
 

@@ -1667,7 +1667,6 @@ sub process {
 # some scripts we imported from other projects.
 		next if ($realfile =~ /\.(s|S)$/);
 		next if ($realfile =~ /(checkpatch|get_maintainer)\.pl$/);
-		next if ($realfile =~ /^target\/hexagon\/imported\/*/);
 
 		if ($rawline =~ /^\+.*\t/) {
 			my $herevet = "$here\n" . cat_vet($rawline) . "\n";
@@ -1681,10 +1680,8 @@ sub process {
 # Block comment styles
 
 		# Block comments use /* on a line of its own
-		my $commentline = $rawline;
-		while ($commentline =~ s@^(\+.*)/\*.*\*/@$1@o) { # remove inline /*...*/
-		}
-		if ($commentline =~ m@^\+.*/\*\*?+[ \t]*[^ \t]@) { # /* or /** non-blank
+		if ($rawline !~ m@^\+.*/\*.*\*/[ \t)}]*$@ &&	#inline /*...*/
+		    $rawline =~ m@^\+.*/\*\*?+[ \t]*[^ \t]@) { # /* or /** non-blank
 			WARN("Block comments use a leading /* on a separate line\n" . $herecurr);
 		}
 

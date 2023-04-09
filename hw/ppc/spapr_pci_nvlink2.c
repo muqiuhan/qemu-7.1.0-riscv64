@@ -397,7 +397,7 @@ void spapr_phb_nvgpu_populate_pcidev_dt(PCIDevice *dev, void *fdt, int offset,
             continue;
         }
         if (dev == nvslot->gpdev) {
-            g_autofree uint32_t *npus = g_new(uint32_t, nvslot->linknum);
+            uint32_t npus[nvslot->linknum];
 
             for (j = 0; j < nvslot->linknum; ++j) {
                 PCIDevice *npdev = nvslot->links[j].npdev;

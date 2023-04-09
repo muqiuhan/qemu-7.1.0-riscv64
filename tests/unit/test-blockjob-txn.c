@@ -116,10 +116,8 @@ static void test_single_job(int expected)
     job = test_block_job_start(1, true, expected, &result, txn);
     job_start(&job->job);
 
-    WITH_JOB_LOCK_GUARD() {
-        if (expected == -ECANCELED) {
-            job_cancel_locked(&job->job, false);
-        }
+    if (expected == -ECANCELED) {
+        job_cancel(&job->job, false);
     }
 
     while (result == -EINPROGRESS) {
@@ -162,15 +160,13 @@ static void test_pair_jobs(int expected1, int expected2)
     /* Release our reference now to trigger as many nice
      * use-after-free bugs as possible.
      */
-    WITH_JOB_LOCK_GUARD() {
-        job_txn_unref_locked(txn);
+    job_txn_unref(txn);
 
-        if (expected1 == -ECANCELED) {
-            job_cancel_locked(&job1->job, false);
-        }
-        if (expected2 == -ECANCELED) {
-            job_cancel_locked(&job2->job, false);
-        }
+    if (expected1 == -ECANCELED) {
+        job_cancel(&job1->job, false);
+    }
+    if (expected2 == -ECANCELED) {
+        job_cancel(&job2->job, false);
     }
 
     while (result1 == -EINPROGRESS || result2 == -EINPROGRESS) {
@@ -223,9 +219,7 @@ static void test_pair_jobs_fail_cancel_race(void)
     job_start(&job1->job);
     job_start(&job2->job);
 
-    WITH_JOB_LOCK_GUARD() {
-        job_cancel_locked(&job1->job, false);
-    }
+    job_cancel(&job1->job, false);
 
     /* Now make job2 finish before the main loop kicks jobs.  This simulates
      * the race between a pending kick and another job completing.

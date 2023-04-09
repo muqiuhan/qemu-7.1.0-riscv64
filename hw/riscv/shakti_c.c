@@ -66,7 +66,8 @@ static void shakti_c_machine_state_init(MachineState *mstate)
     riscv_setup_rom_reset_vec(mstate, &sms->soc.cpus,
                               shakti_c_memmap[SHAKTI_C_RAM].base,
                               shakti_c_memmap[SHAKTI_C_ROM].base,
-                              shakti_c_memmap[SHAKTI_C_ROM].size, 0, 0);
+                              shakti_c_memmap[SHAKTI_C_ROM].size, 0, 0,
+                              NULL);
     if (mstate->firmware) {
         riscv_load_firmware(mstate->firmware,
                             shakti_c_memmap[SHAKTI_C_RAM].base,

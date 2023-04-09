@@ -1,4 +1,4 @@
-project('multiple-gobject-introspection', 'c', meson_version: '>=0.50.0')
+project('multiple-gobject-introspection', 'c')
 
 gir = find_program('g-ir-scanner', required: false)
 if not gir.found()

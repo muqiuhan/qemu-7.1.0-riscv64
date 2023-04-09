@@ -19,7 +19,7 @@ import subprocess
 from pathlib import Path
 import typing as T
 
-from ..mesonlib import Popen_safe, split_args
+from ..mesonlib import Popen_safe
 
 class ExternalProject:
     def __init__(self, options: argparse.Namespace):
@@ -31,7 +31,7 @@ class ExternalProject:
         self.verbose = options.verbose
         self.stampfile = options.stampfile
         self.depfile = options.depfile
-        self.make = split_args(options.make)
+        self.make = options.make
 
     def write_depfile(self) -> None:
         with open(self.depfile, 'w', encoding='utf-8') as f:
@@ -45,32 +45,26 @@ class ExternalProject:
                     f.write('  {} \\\n'.format(path.as_posix().replace(' ', '\\ ')))
 
     def write_stampfile(self) -> None:
-        with open(self.stampfile, 'w', encoding='utf-8'):
+        with open(self.stampfile, 'w', encoding='utf-8') as f:
             pass
 
     def gnu_make(self) -> bool:
-        p, o, e = Popen_safe(self.make + ['--version'])
+        p, o, e = Popen_safe([self.make, '--version'])
         if p.returncode == 0 and 'GNU Make' in o:
             return True
         return False
 
     def build(self) -> int:
-        is_make = self.make[0] == 'make'
-        make_cmd = self.make.copy()
-        if is_make and self.gnu_make():
-            make_cmd.append(f'-j{multiprocessing.cpu_count()}')
+        make_cmd = [self.make]
+        if self.gnu_make():
+            make_cmd.append('-j' + str(multiprocessing.cpu_count()))
+
         rc = self._run('build', make_cmd)
         if rc != 0:
             return rc
 
-        install_cmd = self.make.copy()
-        install_env = {}
-        if is_make:
-            install_cmd.append(f'DESTDIR={self.install_dir}')
-        else:
-            install_env['DESTDIR'] = self.install_dir
-        install_cmd.append('install')
-        rc = self._run('install', install_cmd, install_env)
+        install_cmd = make_cmd + ['DESTDIR= ' + self.install_dir, 'install']
+        rc = self._run('install', install_cmd)
         if rc != 0:
             return rc
 
@@ -79,7 +73,7 @@ class ExternalProject:
 
         return 0
 
-    def _run(self, step: str, command: T.List[str], env: T.Optional[T.Dict[str, str]] = None) -> int:
+    def _run(self, step: str, command: T.List[str]) -> int:
         m = 'Running command ' + str(command) + ' in directory ' + str(self.build_dir) + '\n'
         log_filename = Path(self.log_dir, f'{self.name}-{step}.log')
         output = None
@@ -89,12 +83,8 @@ class ExternalProject:
             output.flush()
         else:
             print(m)
-        run_env = os.environ.copy()
-        if env:
-            run_env.update(env)
         p, o, e = Popen_safe(command, stderr=subprocess.STDOUT, stdout=output,
-                             cwd=self.build_dir,
-                             env=run_env)
+                             cwd=self.build_dir)
         if p.returncode != 0:
             m = f'{step} step returned error code {p.returncode}.'
             if not self.verbose:

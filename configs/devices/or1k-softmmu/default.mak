@@ -3,4 +3,3 @@
 # Boards:
 #
 CONFIG_OR1K_SIM=y
-CONFIG_OR1K_VIRT=y

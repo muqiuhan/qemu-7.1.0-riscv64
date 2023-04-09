@@ -19,8 +19,7 @@ struct DisasContextBase;
 
 #ifdef CONFIG_PLUGIN
 
-bool plugin_gen_tb_start(CPUState *cpu, const struct DisasContextBase *db,
-                         bool supress);
+bool plugin_gen_tb_start(CPUState *cpu, const TranslationBlock *tb, bool supress);
 void plugin_gen_tb_end(CPUState *cpu);
 void plugin_gen_insn_start(CPUState *cpu, const struct DisasContextBase *db);
 void plugin_gen_insn_end(void);
@@ -49,8 +48,8 @@ static inline void plugin_insn_append(abi_ptr pc, const void *from, size_t size)
 
 #else /* !CONFIG_PLUGIN */
 
-static inline bool
-plugin_gen_tb_start(CPUState *cpu, const struct DisasContextBase *db, bool sup)
+static inline
+bool plugin_gen_tb_start(CPUState *cpu, const TranslationBlock *tb, bool supress)
 {
     return false;
 }

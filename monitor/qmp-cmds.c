@@ -135,11 +135,8 @@ void qmp_cont(Error **errp)
         blk_iostatus_reset(blk);
     }
 
-    WITH_JOB_LOCK_GUARD() {
-        for (job = block_job_next_locked(NULL); job;
-             job = block_job_next_locked(job)) {
-            block_job_iostatus_reset_locked(job);
-        }
+    for (job = block_job_next(NULL); job; job = block_job_next(job)) {
+        block_job_iostatus_reset(job);
     }
 
     /* Continuing after completed migration. Images have been inactivated to

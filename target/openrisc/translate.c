@@ -1705,13 +1705,11 @@ static const TranslatorOps openrisc_tr_ops = {
     .disas_log          = openrisc_tr_disas_log,
 };
 
-void gen_intermediate_code(CPUState *cs, TranslationBlock *tb, int max_insns,
-                           target_ulong pc, void *host_pc)
+void gen_intermediate_code(CPUState *cs, TranslationBlock *tb, int max_insns)
 {
     DisasContext ctx;
 
-    translator_loop(cs, tb, max_insns, pc, host_pc,
-                    &openrisc_tr_ops, &ctx.base);
+    translator_loop(&openrisc_tr_ops, &ctx.base, cs, tb, max_insns);
 }
 
 void openrisc_cpu_dump_state(CPUState *cs, FILE *f, int flags)
@@ -1724,5 +1722,15 @@ void openrisc_cpu_dump_state(CPUState *cs, FILE *f, int flags)
     for (i = 0; i < 32; ++i) {
         qemu_fprintf(f, "R%02d=%08x%c", i, cpu_get_gpr(env, i),
                      (i % 4) == 3 ? '\n' : ' ');
+    }
+}
+
+void restore_state_to_opc(CPUOpenRISCState *env, TranslationBlock *tb,
+                          target_ulong *data)
+{
+    env->pc = data[0];
+    env->dflag = data[1] & 1;
+    if (data[1] & 2) {
+        env->ppc = env->pc - 4;
     }
 }

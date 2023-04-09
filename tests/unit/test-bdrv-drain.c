@@ -930,9 +930,9 @@ static void test_blockjob_common_drain_node(enum drain_type drain_type,
         tjob->prepare_ret = -EIO;
         break;
     }
-    aio_context_release(ctx);
 
     job_start(&job->job);
+    aio_context_release(ctx);
 
     if (use_iothread) {
         /* job_co_entry() is run in the I/O thread, wait for the actual job
@@ -943,85 +943,63 @@ static void test_blockjob_common_drain_node(enum drain_type drain_type,
         }
     }
 
-    WITH_JOB_LOCK_GUARD() {
-        g_assert_cmpint(job->job.pause_count, ==, 0);
-        g_assert_false(job->job.paused);
-        g_assert_true(tjob->running);
-        g_assert_true(job->job.busy); /* We're in qemu_co_sleep_ns() */
-    }
+    g_assert_cmpint(job->job.pause_count, ==, 0);
+    g_assert_false(job->job.paused);
+    g_assert_true(tjob->running);
+    g_assert_true(job->job.busy); /* We're in qemu_co_sleep_ns() */
 
     do_drain_begin_unlocked(drain_type, drain_bs);
 
-    WITH_JOB_LOCK_GUARD() {
-        if (drain_type == BDRV_DRAIN_ALL) {
-            /* bdrv_drain_all() drains both src and target */
-            g_assert_cmpint(job->job.pause_count, ==, 2);
-        } else {
-            g_assert_cmpint(job->job.pause_count, ==, 1);
-        }
-        g_assert_true(job->job.paused);
-        g_assert_false(job->job.busy); /* The job is paused */
+    if (drain_type == BDRV_DRAIN_ALL) {
+        /* bdrv_drain_all() drains both src and target */
+        g_assert_cmpint(job->job.pause_count, ==, 2);
+    } else {
+        g_assert_cmpint(job->job.pause_count, ==, 1);
     }
+    g_assert_true(job->job.paused);
+    g_assert_false(job->job.busy); /* The job is paused */
 
     do_drain_end_unlocked(drain_type, drain_bs);
 
     if (use_iothread) {
-        /*
-         * Here we are waiting for the paused status to change,
-         * so don't bother protecting the read every time.
-         *
-         * paused is reset in the I/O thread, wait for it
-         */
+        /* paused is reset in the I/O thread, wait for it */
         while (job->job.paused) {
             aio_poll(qemu_get_aio_context(), false);
         }
     }
 
-    WITH_JOB_LOCK_GUARD() {
-        g_assert_cmpint(job->job.pause_count, ==, 0);
-        g_assert_false(job->job.paused);
-        g_assert_true(job->job.busy); /* We're in qemu_co_sleep_ns() */
-    }
+    g_assert_cmpint(job->job.pause_count, ==, 0);
+    g_assert_false(job->job.paused);
+    g_assert_true(job->job.busy); /* We're in qemu_co_sleep_ns() */
 
     do_drain_begin_unlocked(drain_type, target);
 
-    WITH_JOB_LOCK_GUARD() {
-        if (drain_type == BDRV_DRAIN_ALL) {
-            /* bdrv_drain_all() drains both src and target */
-            g_assert_cmpint(job->job.pause_count, ==, 2);
-        } else {
-            g_assert_cmpint(job->job.pause_count, ==, 1);
-        }
-        g_assert_true(job->job.paused);
-        g_assert_false(job->job.busy); /* The job is paused */
+    if (drain_type == BDRV_DRAIN_ALL) {
+        /* bdrv_drain_all() drains both src and target */
+        g_assert_cmpint(job->job.pause_count, ==, 2);
+    } else {
+        g_assert_cmpint(job->job.pause_count, ==, 1);
     }
+    g_assert_true(job->job.paused);
+    g_assert_false(job->job.busy); /* The job is paused */
 
     do_drain_end_unlocked(drain_type, target);
 
     if (use_iothread) {
-        /*
-         * Here we are waiting for the paused status to change,
-         * so don't bother protecting the read every time.
-         *
-         * paused is reset in the I/O thread, wait for it
-         */
+        /* paused is reset in the I/O thread, wait for it */
         while (job->job.paused) {
             aio_poll(qemu_get_aio_context(), false);
         }
     }
 
-    WITH_JOB_LOCK_GUARD() {
-        g_assert_cmpint(job->job.pause_count, ==, 0);
-        g_assert_false(job->job.paused);
-        g_assert_true(job->job.busy); /* We're in qemu_co_sleep_ns() */
-    }
-
-    WITH_JOB_LOCK_GUARD() {
-        ret = job_complete_sync_locked(&job->job, &error_abort);
-    }
-    g_assert_cmpint(ret, ==, (result == TEST_JOB_SUCCESS ? 0 : -EIO));
+    g_assert_cmpint(job->job.pause_count, ==, 0);
+    g_assert_false(job->job.paused);
+    g_assert_true(job->job.busy); /* We're in qemu_co_sleep_ns() */
 
     aio_context_acquire(ctx);
+    ret = job_complete_sync(&job->job, &error_abort);
+    g_assert_cmpint(ret, ==, (result == TEST_JOB_SUCCESS ? 0 : -EIO));
+
     if (use_iothread) {
         blk_set_aio_context(blk_src, qemu_get_aio_context(), &error_abort);
         assert(blk_get_aio_context(blk_target) == qemu_get_aio_context());
@@ -1538,16 +1516,16 @@ static void test_set_aio_context(void)
                               &error_abort);
 
     bdrv_drained_begin(bs);
-    bdrv_try_change_aio_context(bs, ctx_a, NULL, &error_abort);
+    bdrv_try_set_aio_context(bs, ctx_a, &error_abort);
 
     aio_context_acquire(ctx_a);
     bdrv_drained_end(bs);
 
     bdrv_drained_begin(bs);
-    bdrv_try_change_aio_context(bs, ctx_b, NULL, &error_abort);
+    bdrv_try_set_aio_context(bs, ctx_b, &error_abort);
     aio_context_release(ctx_a);
     aio_context_acquire(ctx_b);
-    bdrv_try_change_aio_context(bs, qemu_get_aio_context(), NULL, &error_abort);
+    bdrv_try_set_aio_context(bs, qemu_get_aio_context(), &error_abort);
     aio_context_release(ctx_b);
     bdrv_drained_end(bs);
 
@@ -1830,8 +1808,9 @@ static void test_drop_intermediate_poll(void)
     for (i = 0; i < 3; i++) {
         if (i) {
             /* Takes the reference to chain[i - 1] */
-            bdrv_attach_child(chain[i], chain[i - 1], "chain",
-                              &chain_child_class, BDRV_CHILD_COW, &error_abort);
+            chain[i]->backing = bdrv_attach_child(chain[i], chain[i - 1],
+                                                  "chain", &chain_child_class,
+                                                  BDRV_CHILD_COW, &error_abort);
         }
     }
 
@@ -1969,7 +1948,6 @@ static void coroutine_fn bdrv_replace_test_co_drain_end(BlockDriverState *bs)
 static BlockDriver bdrv_replace_test = {
     .format_name            = "replace_test",
     .instance_size          = sizeof(BDRVReplaceTestState),
-    .supports_backing       = true,
 
     .bdrv_close             = bdrv_replace_test_close,
     .bdrv_co_preadv         = bdrv_replace_test_co_preadv,
@@ -2049,8 +2027,9 @@ static void do_test_replace_child_mid_drain(int old_drain_count,
     new_child_bs->total_sectors = 1;
 
     bdrv_ref(old_child_bs);
-    bdrv_attach_child(parent_bs, old_child_bs, "child", &child_of_bds,
-                      BDRV_CHILD_COW, &error_abort);
+    parent_bs->backing = bdrv_attach_child(parent_bs, old_child_bs, "child",
+                                           &child_of_bds, BDRV_CHILD_COW,
+                                           &error_abort);
 
     for (i = 0; i < old_drain_count; i++) {
         bdrv_drained_begin(old_child_bs);

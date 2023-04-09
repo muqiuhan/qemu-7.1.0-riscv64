@@ -23,90 +23,29 @@ import textwrap
 #
 
 
-def docs(namespace):
+def docs():
     return textwrap.dedent(
-        f"""
+        """
         # Variables that can be set to control the behaviour of
         # pipelines that are run
         #
-        #  - RUN_PIPELINE - force creation of a CI pipeline when
-        #    pushing to a branch in a forked repository. Official
-        #    CI pipelines are triggered when merge requests are
-        #    created/updated. Setting this variable to a non-empty
-        #    value allows CI testing prior to opening a merge request.
-        #
-        #  - RUN_CONTAINER_BUILDS - CI pipelines in upstream only
-        #    publish containers if CI file changes are detected.
-        #    Setting this variable to a non-empty value will force
-        #    re-publishing, even when no file changes are detected.
-        #    Typically to use from a scheduled job once a month.
-        #
-        #  - RUN_UPSTREAM_NAMESPACE - the upstream namespace is
-        #    configured to default to '{namespace}'. When testing
-        #    changes to CI it might be useful to use a different
-        #    upstream. Setting this variable will override the
-        #    namespace considered to be upstream.
+        #  - RUN_ALL_CONTAINERS - build all containers
+        #    even if they don't have any changes detected
         #
         # These can be set as git push options
         #
-        #  $ git push -o ci.variable=RUN_PIPELINE=1
+        #  $ git push -o ci.variable=RUN_ALL_CONTAINERS=1
         #
         # Aliases can be set for common usage
         #
-        #  $ git config --local alias.push-ci "push -o ci.variable=RUN_PIPELINE=1"
+        #  $ git config --local alias.push-all-ctr "push -o ci.variable=RUN_ALL_CONTAINERS=1"
         #
         # Allowing the less verbose invocation
         #
-        #  $ git push-ci
+        #  $ git push-all-ctr
         #
         # Pipeline variables can also be set in the repository
         # pipeline config globally, or set against scheduled pipelines
-        """)
-
-
-def variables(namespace):
-    return textwrap.dedent(
-        f"""
-        variables:
-          RUN_UPSTREAM_NAMESPACE: {namespace}
-        """)
-
-
-def workflow():
-    return textwrap.dedent(
-        """
-        workflow:
-          rules:
-            # upstream+forks: Avoid duplicate pipelines on pushes, if a MR is open
-            - if: '$CI_PIPELINE_SOURCE == "push" && $CI_OPEN_MERGE_REQUESTS'
-              when: never
-
-            # upstream+forks: Avoid pipelines on tag pushes
-            - if: '$CI_PIPELINE_SOURCE == "push" && $CI_COMMIT_TAG'
-              when: never
-
-            # upstream+forks: Allow pipelines in scenarios we've figured out job rules
-            - if: '$CI_PIPELINE_SOURCE =~ /^(push|merge_request_event|api|web|schedule)$/'
-              when: always
-
-            # upstream+forks: Avoid all other pipelines
-            - when: never
-        """)
-
-
-def debug():
-    return textwrap.dedent(
-        """
-        debug:
-          image: docker.io/library/alpine:3
-          stage: sanity_checks
-          interruptible: true
-          needs: []
-          script:
-            - printenv | sort
-          rules:
-            - if: '$RUN_DEBUG'
-              when: always
         """)
 
 
@@ -125,180 +64,86 @@ def format_variables(variables):
     return ""
 
 
-def container_template(cidir):
+def container_template(namespace, project, cidir):
     return textwrap.dedent(
         f"""
-        # We want to publish containers with tag 'latest':
+        # For upstream
         #
-        #  - In upstream, for push to default branch with CI changes.
-        #  - In upstream, on request, for scheduled/manual pipelines
-        #    against default branch
+        #   - Push to default branch:
+        #       -> rebuild if dockerfile changed, no cache
+        #   - Otherwise
+        #       -> rebuild if RUN_ALL_CONTAINERS=1, no cache,
+        #          to pick up new published distro packages or
+        #          recover from deleted tag
         #
-        # Note: never publish from merge requests since they have non-committed code
+        # For forks
+        #   - Always rebuild, with cache
         #
         .container_job:
           image: docker:stable
           stage: containers
-          interruptible: false
           needs: []
           services:
             - docker:dind
           before_script:
             - export TAG="$CI_REGISTRY_IMAGE/ci-$NAME:latest"
+            - export COMMON_TAG="$CI_REGISTRY/{namespace}/{project}/ci-$NAME:latest"
             - docker info
             - docker login "$CI_REGISTRY" -u "$CI_REGISTRY_USER" -p "$CI_REGISTRY_PASSWORD"
           script:
-            - docker build --tag "$TAG" -f "{cidir}/containers/$NAME.Dockerfile" {cidir}/containers ;
+            - if test $CI_PROJECT_NAMESPACE = "{namespace}";
+              then
+                docker build --tag "$TAG" -f "{cidir}/containers/$NAME.Dockerfile" {cidir}/containers ;
+              else
+                docker pull "$TAG" || docker pull "$COMMON_TAG" || true ;
+                docker build --cache-from "$TAG" --cache-from "$COMMON_TAG" --tag "$TAG" -f "{cidir}/containers/$NAME.Dockerfile" {cidir}/containers ;
+              fi
             - docker push "$TAG"
           after_script:
             - docker logout
           rules:
-            # upstream: publish containers if there were CI changes on the default branch
-            - if: '$CI_PROJECT_NAMESPACE == $RUN_UPSTREAM_NAMESPACE && $CI_PIPELINE_SOURCE == "push" && $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH'
+            - if: '$CI_PIPELINE_SOURCE == "merge_request_event"'
+              when: never
+            - if: '$CI_PROJECT_NAMESPACE == "{namespace}" && $CI_PIPELINE_SOURCE == "push" && $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH'
               when: on_success
               changes:
-                - {cidir}/gitlab/container-templates.yml
-                - {cidir}/containers/$NAME.Dockerfile
-
-            # upstream: allow force re-publishing containers on default branch for web/api/scheduled pipelines
-            - if: '$CI_PROJECT_NAMESPACE == $RUN_UPSTREAM_NAMESPACE && $CI_PIPELINE_SOURCE =~ /(web|api|schedule)/ && $CI_COMMIT_REF_NAME == $CI_DEFAULT_BRANCH && $RUN_CONTAINER_BUILDS == "1"'
+               - {cidir}/gitlab/container-templates.yml
+               - {cidir}/containers/$NAME.Dockerfile
+            - if: '$CI_PROJECT_NAMESPACE == "{namespace}" && $RUN_ALL_CONTAINERS == "1"'
               when: on_success
-
-            # upstream+forks: that's all folks
-            - when: never
+            - if: '$CI_PROJECT_NAMESPACE == "{namespace}"'
+              when: never
+            - if: '$JOB_OPTIONAL'
+              when: manual
+              allow_failure: true
+            - when: on_success
         """)
 
 
-def _build_template(template, image, project, cidir):
+def _build_template(template, image):
     return textwrap.dedent(
         f"""
-        #
-        # We use pre-built containers for any pipelines that are:
-        #
-        #  - Validating code committed on default upstream branch
-        #  - Validating patches targeting default upstream branch
-        #    which do not have CI changes
-        #
-        # We use a local build env for any pipelines that are:
-        #
-        #  - Validating code committed to a non-default upstream branch
-        #  - Validating patches targeting a non-default upstream branch
-        #  - Validating patches targeting default upstream branch which
-        #    include CI changes
-        #  - Validating code committed to a fork branch
-        #
-        # Note: the rules across the prebuilt_env and local_env templates
-        # should be logical inverses, such that jobs are mutually exclusive
-        #
-        {template}_prebuilt_env:
-          image: $CI_REGISTRY/$RUN_UPSTREAM_NAMESPACE/{project}/{image}:latest
+        {template}:
+          image: $CI_REGISTRY_IMAGE/{image}:latest
           stage: builds
-          interruptible: true
-          before_script:
-            - cat /packages.txt
           rules:
-            # upstream: pushes to the default branch
-            - if: '$CI_PROJECT_NAMESPACE == $RUN_UPSTREAM_NAMESPACE && $CI_PIPELINE_SOURCE == "push" && $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH && $JOB_OPTIONAL'
-              when: manual
-              allow_failure: true
-            - if: '$CI_PROJECT_NAMESPACE == $RUN_UPSTREAM_NAMESPACE && $CI_PIPELINE_SOURCE == "push" && $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH'
-              when: on_success
-
-            # upstream: other web/api/scheduled pipelines targeting the default branch
-            - if: '$CI_PROJECT_NAMESPACE == $RUN_UPSTREAM_NAMESPACE && $CI_PIPELINE_SOURCE =~ /(web|api|schedule)/ && $CI_COMMIT_REF_NAME == $CI_DEFAULT_BRANCH && $JOB_OPTIONAL'
-              when: manual
-              allow_failure: true
-            - if: '$CI_PROJECT_NAMESPACE == $RUN_UPSTREAM_NAMESPACE && $CI_PIPELINE_SOURCE =~ /(web|api|schedule)/ && $CI_COMMIT_REF_NAME == $CI_DEFAULT_BRANCH'
-              when: on_success
-
-            # upstream+forks: merge requests targeting the default branch, without CI changes
-            - if: '$CI_PIPELINE_SOURCE == "merge_request_event" && $CI_MERGE_REQUEST_TARGET_BRANCH_NAME == $CI_DEFAULT_BRANCH'
-              changes:
-                - {cidir}/gitlab/container-templates.yml
-                - {cidir}/containers/$NAME.Dockerfile
+            - if: '$CI_PIPELINE_SOURCE == "merge_request_event"'
               when: never
-            - if: '$CI_PIPELINE_SOURCE == "merge_request_event" && $CI_MERGE_REQUEST_TARGET_BRANCH_NAME == $CI_DEFAULT_BRANCH && $JOB_OPTIONAL'
+            - if: '$JOB_OPTIONAL'
               when: manual
               allow_failure: true
-            - if: '$CI_PIPELINE_SOURCE == "merge_request_event" && $CI_MERGE_REQUEST_TARGET_BRANCH_NAME == $CI_DEFAULT_BRANCH'
-              when: on_success
-
-            # upstream+forks: that's all folks
-            - when: never
-
-        {template}_local_env:
-          image: $IMAGE
-          stage: builds
-          interruptible: true
-          before_script:
-            - source {cidir}/buildenv/$NAME.sh
-            - install_buildenv
-            - cat /packages.txt
-          rules:
-            # upstream: pushes to a non-default branch
-            - if: '$CI_PROJECT_NAMESPACE == $RUN_UPSTREAM_NAMESPACE && $CI_PIPELINE_SOURCE == "push" && $CI_COMMIT_BRANCH != $CI_DEFAULT_BRANCH && $JOB_OPTIONAL'
-              when: manual
-              allow_failure: true
-            - if: '$CI_PROJECT_NAMESPACE == $RUN_UPSTREAM_NAMESPACE && $CI_PIPELINE_SOURCE == "push" && $CI_COMMIT_BRANCH != $CI_DEFAULT_BRANCH'
-              when: on_success
-
-            - if: '$CI_PROJECT_NAMESPACE != $RUN_UPSTREAM_NAMESPACE && $CI_PIPELINE_SOURCE == "push" && $RUN_PIPELINE && $JOB_OPTIONAL'
-              when: manual
-              allow_failure: true
-            - if: '$CI_PROJECT_NAMESPACE != $RUN_UPSTREAM_NAMESPACE && $CI_PIPELINE_SOURCE == "push" && $RUN_PIPELINE'
-              when: on_success
-
-            # upstream: other web/api/scheduled pipelines targeting non-default branches
-            - if: '$CI_PROJECT_NAMESPACE == $RUN_UPSTREAM_NAMESPACE && $CI_PIPELINE_SOURCE =~ /(web|api|schedule)/ && $CI_COMMIT_REF_NAME != $CI_DEFAULT_BRANCH && $JOB_OPTIONAL'
-              when: manual
-              allow_failure: true
-            - if: '$CI_PROJECT_NAMESPACE == $RUN_UPSTREAM_NAMESPACE && $CI_PIPELINE_SOURCE =~ /(web|api|schedule)/ && $CI_COMMIT_REF_NAME != $CI_DEFAULT_BRANCH'
-              when: on_success
-
-            # forks: other web/api/scheduled pipelines
-            - if: '$CI_PROJECT_NAMESPACE != $RUN_UPSTREAM_NAMESPACE && $CI_PIPELINE_SOURCE =~ /(web|api|schedule)/ && $JOB_OPTIONAL'
-              when: manual
-              allow_failure: true
-            - if: '$CI_PROJECT_NAMESPACE != $RUN_UPSTREAM_NAMESPACE && $CI_PIPELINE_SOURCE =~ /(web|api|schedule)/'
-              when: on_success
-
-            # upstream+forks: merge requests targeting the default branch, with CI changes
-            - if: '$CI_PIPELINE_SOURCE == "merge_request_event" && $CI_MERGE_REQUEST_TARGET_BRANCH_NAME == $CI_DEFAULT_BRANCH && $JOB_OPTIONAL'
-              changes:
-                - {cidir}/gitlab/container-templates.yml
-                - {cidir}/containers/$NAME.Dockerfile
-              when: manual
-              allow_failure: true
-            - if: '$CI_PIPELINE_SOURCE == "merge_request_event" && $CI_MERGE_REQUEST_TARGET_BRANCH_NAME == $CI_DEFAULT_BRANCH'
-              changes:
-                - {cidir}/gitlab/container-templates.yml
-                - {cidir}/containers/$NAME.Dockerfile
-              when: on_success
-
-            # upstream+forks: merge requests targeting non-default branches
-            - if: '$CI_PIPELINE_SOURCE == "merge_request_event" && $CI_MERGE_REQUEST_TARGET_BRANCH_NAME != $CI_DEFAULT_BRANCH && $JOB_OPTIONAL'
-              when: manual
-              allow_failure: true
-            - if: '$CI_PIPELINE_SOURCE == "merge_request_event" && $CI_MERGE_REQUEST_TARGET_BRANCH_NAME != $CI_DEFAULT_BRANCH'
-              when: on_success
-
-            # upstream+forks: that's all folks
-            - when: never
+            - when: on_success
         """)
 
 
-def native_build_template(project, cidir):
+def native_build_template():
     return _build_template(".gitlab_native_build_job",
-                           "ci-$NAME",
-                           project,
-                           cidir)
+                           "ci-$NAME")
 
 
-def cross_build_template(project, cidir):
+def cross_build_template():
     return _build_template(".gitlab_cross_build_job",
-                           "ci-$NAME-cross-$CROSS",
-                           project,
-                           cidir)
+                           "ci-$NAME-cross-$CROSS")
 
 
 def cirrus_template(cidir):
@@ -307,7 +152,6 @@ def cirrus_template(cidir):
         .cirrus_build_job:
           stage: builds
           image: registry.gitlab.com/libvirt/libvirt-ci/cirrus-run:master
-          interruptible: true
           needs: []
           script:
             - source {cidir}/cirrus/$NAME.vars
@@ -332,100 +176,47 @@ def cirrus_template(cidir):
             - cat {cidir}/cirrus/$NAME.yml
             - cirrus-run -v --show-build-log always {cidir}/cirrus/$NAME.yml
           rules:
-            # upstream+forks: Can't run unless Cirrus is configured
             - if: '$CIRRUS_GITHUB_REPO == null || $CIRRUS_API_TOKEN == null'
               when: never
-
-            # upstream: pushes to branches
-            - if: '$CI_PROJECT_NAMESPACE == $RUN_UPSTREAM_NAMESPACE && $CI_PIPELINE_SOURCE == "push" && $JOB_OPTIONAL'
+            - if: '$JOB_OPTIONAL'
               when: manual
               allow_failure: true
-            - if: '$CI_PROJECT_NAMESPACE == $RUN_UPSTREAM_NAMESPACE && $CI_PIPELINE_SOURCE == "push"'
-              when: on_success
-
-            # forks: pushes to branches with pipeline requested
-            - if: '$CI_PROJECT_NAMESPACE != $RUN_UPSTREAM_NAMESPACE && $CI_PIPELINE_SOURCE == "push" && $RUN_PIPELINE && $JOB_OPTIONAL'
-              when: manual
-              allow_failure: true
-            - if: '$CI_PROJECT_NAMESPACE != $RUN_UPSTREAM_NAMESPACE && $CI_PIPELINE_SOURCE == "push" && $RUN_PIPELINE'
-              when: on_success
-
-            # upstream+forks: Run pipelines on MR, web, api & scheduled
-            - if: '$CI_PIPELINE_SOURCE =~ /(web|api|schedule|merge_request_event)/ && $JOB_OPTIONAL'
-              when: manual
-              allow_failure: true
-            - if: '$CI_PIPELINE_SOURCE =~ /(web|api|schedule|merge_request_event)/'
-              when: on_success
-
-            # upstream+forks: that's all folks
-            - when: never
+            - when: on_success
         """)
 
 
-def check_dco_job():
+def check_dco_job(namespace):
     jobvars = {
         "GIT_DEPTH": "1000",
     }
     return textwrap.dedent(
-        """
+        f"""
         check-dco:
           stage: sanity_checks
           needs: []
           image: registry.gitlab.com/libvirt/libvirt-ci/check-dco:master
-          interruptible: true
           script:
-            - /check-dco "$RUN_UPSTREAM_NAMESPACE"
-          rules:
-            # upstream+forks: Run pipelines on MR
-            - if: '$CI_PIPELINE_SOURCE =~ "merge_request_event"'
-              when: on_success
-
-            # forks: pushes to branches with pipeline requested
-            - if: '$CI_PROJECT_NAMESPACE != $RUN_UPSTREAM_NAMESPACE && $CI_PIPELINE_SOURCE == "push" && $CI_COMMIT_BRANCH && $RUN_PIPELINE'
-              when: on_success
-
-            # upstream+forks: that's all folks
-            - when: never
+            - /check-dco {namespace}
+          except:
+            variables:
+              - $CI_PROJECT_NAMESPACE == '{namespace}'
         """) + format_variables(jobvars)
-
-
-def code_fmt_template():
-    return textwrap.dedent(
-        """
-        .code_format:
-          stage: sanity_checks
-          image: registry.gitlab.com/libvirt/libvirt-ci/$NAME:master
-          interruptible: true
-          needs: []
-          script:
-            - /$NAME
-          rules:
-            # upstream+forks: Run pipelines on MR, web, api & scheduled
-            - if: '$CI_PIPELINE_SOURCE =~ /(web|api|schedule|merge_request_event)/'
-              when: on_success
-
-            # forks: pushes to branches with pipeline requested
-            - if: '$CI_PROJECT_NAMESPACE != $RUN_UPSTREAM_NAMESPACE && $CI_PIPELINE_SOURCE == "push" && $CI_COMMIT_BRANCH && $RUN_PIPELINE'
-              when: on_success
-
-            # upstream+forks: that's all folks
-            - when: never
-          artifacts:
-            paths:
-              - $NAME.$EXT
-            expire_in: 1 week
-            when: on_failure
-        """)
 
 
 def cargo_fmt_job():
     return textwrap.dedent(
         """
         cargo-fmt:
-          extends: .code_format
-          variables:
-            NAME: cargo-fmt
-            EXT: txt
+          stage: sanity_checks
+          image: registry.gitlab.com/libvirt/libvirt-ci/cargo-fmt:master
+          needs: []
+          script:
+            - /cargo-fmt
+          artifacts:
+            paths:
+              - cargo-fmt.txt
+            expire_in: 1 week
+            when: on_failure
         """)
 
 
@@ -433,10 +224,16 @@ def go_fmt_job():
     return textwrap.dedent(
         """
         go-fmt:
-          extends: .code_format
-          variables:
-            NAME: go-fmt
-            EXT: patch
+          stage: sanity_checks
+          image: registry.gitlab.com/libvirt/libvirt-ci/go-fmt:master
+          needs: []
+          script:
+            - /go-fmt
+          artifacts:
+            paths:
+              - go-fmt.patch
+            expire_in: 1 week
+            when: on_failure
         """)
 
 
@@ -444,10 +241,16 @@ def clang_format_job():
     return textwrap.dedent(
         """
         clang-format:
-          extends: .code_format
-          variables:
-            NAME: clang-format
-            EXT: patch
+          stage: sanity_checks
+          image: registry.gitlab.com/libvirt/libvirt-ci/clang-format:master
+          needs: []
+          script:
+            - /clang-format
+          artifacts:
+            paths:
+              - clang-format.patch
+            expire_in: 1 week
+            when: on_failure
         """)
 
 
@@ -506,34 +309,21 @@ def merge_vars(system, user):
     return {**user, **system}
 
 
-def _build_job(target, image, arch, suffix, variables,
-               template, allow_failure, artifacts):
+def _build_job(target, arch, suffix, variables, template, allow_failure, artifacts):
     allow_failure = str(allow_failure).lower()
 
-    prebuilt = textwrap.dedent(
+    return textwrap.dedent(
         f"""
-        {arch}-{target}{suffix}-prebuilt-env:
-          extends: {template}_prebuilt_env
+        {arch}-{target}{suffix}:
+          extends: {template}
           needs:
             - job: {arch}-{target}-container
               optional: true
           allow_failure: {allow_failure}
         """) + format_variables(variables) + format_artifacts(artifacts)
 
-    variables["IMAGE"] = image
 
-    local = textwrap.dedent(
-        f"""
-        {arch}-{target}{suffix}-local-env:
-          extends: {template}_local_env
-          needs: []
-          allow_failure: {allow_failure}
-        """) + format_variables(variables) + format_artifacts(artifacts)
-
-    return prebuilt + local
-
-
-def native_build_job(target, image, suffix, variables, template,
+def native_build_job(target, suffix, variables, template,
                      allow_failure, optional, artifacts):
     jobvars = merge_vars({
         "NAME": target,
@@ -542,7 +332,6 @@ def native_build_job(target, image, suffix, variables, template,
         jobvars["JOB_OPTIONAL"] = "1"
 
     return _build_job(target,
-                      image,
                       "x86_64",
                       suffix,
                       jobvars,
@@ -551,7 +340,7 @@ def native_build_job(target, image, suffix, variables, template,
                       artifacts)
 
 
-def cross_build_job(target, image, arch, suffix, variables, template,
+def cross_build_job(target, arch, suffix, variables, template,
                     allow_failure, optional, artifacts):
     jobvars = merge_vars({
         "NAME": target,
@@ -561,7 +350,6 @@ def cross_build_job(target, image, arch, suffix, variables, template,
         jobvars["JOB_OPTIONAL"] = "1"
 
     return _build_job(target,
-                      image,
                       arch,
                       suffix,
                       jobvars,
@@ -570,7 +358,7 @@ def cross_build_job(target, image, arch, suffix, variables, template,
                       artifacts)
 
 
-def cirrus_build_job(target, instance_type, image_selector, image_name, arch,
+def cirrus_build_job(target, instance_type, image_selector, image_name,
                      pkg_cmd, suffix, variables, allow_failure, optional):
     if pkg_cmd == "brew":
         install_cmd = "brew install"
@@ -597,7 +385,7 @@ def cirrus_build_job(target, instance_type, image_selector, image_name, arch,
 
     return textwrap.dedent(
         f"""
-        {arch}-{target}{suffix}:
+        x86_64-{target}{suffix}:
           extends: .cirrus_build_job
           needs: []
           allow_failure: {allow_failure}

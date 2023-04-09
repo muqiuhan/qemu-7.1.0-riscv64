@@ -47,7 +47,7 @@ static AddressSpace *remote_iommu_find_add_as(PCIBus *pci_bus,
     elem = g_hash_table_lookup(iommu->elem_by_devfn, INT2VOIDP(devfn));
 
     if (!elem) {
-        elem = g_new0(RemoteIommuElem, 1);
+        elem = g_malloc0(sizeof(RemoteIommuElem));
         g_hash_table_insert(iommu->elem_by_devfn, INT2VOIDP(devfn), elem);
     }
 

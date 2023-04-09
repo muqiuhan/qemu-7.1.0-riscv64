@@ -66,7 +66,6 @@ class S390CCWVirtioMachine(QemuSystemTest):
                          '-kernel', kernel_path,
                          '-initrd', initrd_path,
                          '-append', kernel_command_line,
-                         '-cpu', 'max,prno-trng=off',
                          '-device', 'virtio-net-ccw,devno=fe.1.1111',
                          '-device',
                          'virtio-rng-ccw,devno=fe.2.0000,max_revision=0,id=rn1',

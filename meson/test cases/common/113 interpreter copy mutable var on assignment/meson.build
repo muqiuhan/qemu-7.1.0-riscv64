@@ -17,3 +17,4 @@ assert(a.has('WORLD'), 'New config data should have been set')
 assert(not b.has('WORLD'), 'New config data set should not affect var copied earlier')
 
 configure_file(output : 'a.h', configuration : a)
+

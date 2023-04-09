@@ -33,9 +33,7 @@ __all__ = [
     'is_source',
     'is_known_suffix',
     'lang_suffixes',
-    'LANGUAGES_USING_LDFLAGS',
     'sort_clink',
-    'SUFFIX_TO_LANG',
 
     'compiler_from_language',
     'detect_compiler_for',
@@ -113,7 +111,6 @@ __all__ = [
     'PGICPPCompiler',
     'PGIFortranCompiler',
     'RustCompiler',
-    'ClippyRustCompiler',
     'CcrxCCompiler',
     'CcrxCPPCompiler',
     'Xc16CCompiler',
@@ -151,7 +148,6 @@ from .compilers import (
     lang_suffixes,
     LANGUAGES_USING_LDFLAGS,
     sort_clink,
-    SUFFIX_TO_LANG,
 )
 from .detect import (
     compiler_from_language,
@@ -244,7 +240,7 @@ from .objcpp import (
     ClangObjCPPCompiler,
     GnuObjCPPCompiler,
 )
-from .rust import RustCompiler, ClippyRustCompiler
+from .rust import RustCompiler
 from .swift import SwiftCompiler
 from .vala import ValaCompiler
 from .mixins.visualstudio import VisualStudioLikeCompiler

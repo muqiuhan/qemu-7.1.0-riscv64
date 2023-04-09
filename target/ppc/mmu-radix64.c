@@ -238,8 +238,6 @@ static void ppc_radix64_set_rc(PowerPCCPU *cpu, MMUAccessType access_type,
 
 static bool ppc_radix64_is_valid_level(int level, int psize, uint64_t nls)
 {
-    bool ret;
-
     /*
      * Check if this is a valid level, according to POWER9 and POWER10
      * Processor User's Manuals, sections 4.10.4.1 and 5.10.6.1, respectively:
@@ -251,25 +249,16 @@ static bool ppc_radix64_is_valid_level(int level, int psize, uint64_t nls)
      */
     switch (level) {
     case 0:     /* Root Page Dir */
-        ret = psize == 52 && nls == 13;
-        break;
+        return psize == 52 && nls == 13;
     case 1:
     case 2:
-        ret = nls == 9;
-        break;
+        return nls == 9;
     case 3:
-        ret = nls == 9 || nls == 5;
-        break;
+        return nls == 9 || nls == 5;
     default:
-        ret = false;
+        qemu_log_mask(LOG_GUEST_ERROR, "invalid radix level: %d\n", level);
+        return false;
     }
-
-    if (unlikely(!ret)) {
-        qemu_log_mask(LOG_GUEST_ERROR, "invalid radix configuration: "
-                      "level %d size %d nls %"PRIu64"\n",
-                      level, psize, nls);
-    }
-    return ret;
 }
 
 static int ppc_radix64_next_level(AddressSpace *as, vaddr eaddr,
@@ -530,13 +519,11 @@ static int ppc_radix64_process_scoped_xlate(PowerPCCPU *cpu,
 
             if (!ppc_radix64_is_valid_level(level++, *g_page_size, nls)) {
                 fault_cause |= DSISR_R_BADCONFIG;
-                ret = 1;
-            } else {
-                ret = ppc_radix64_next_level(cs->as, eaddr & R_EADDR_MASK,
-                                             &h_raddr, &nls, g_page_size,
-                                             &pte, &fault_cause);
+                return 1;
             }
 
+            ret = ppc_radix64_next_level(cs->as, eaddr & R_EADDR_MASK, &h_raddr,
+                                         &nls, g_page_size, &pte, &fault_cause);
             if (ret) {
                 /* No valid pte */
                 if (guest_visible) {

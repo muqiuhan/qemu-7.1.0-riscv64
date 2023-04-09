@@ -6,3 +6,4 @@ subdir('foo')
 executable('prog', 'prog.c',
   link_with : foolib,
   install : true)
+

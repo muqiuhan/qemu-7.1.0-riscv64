@@ -12,66 +12,64 @@
 #ifndef HW_M68K_BOOTINFO_H
 #define HW_M68K_BOOTINFO_H
 
-#define BOOTINFO0(base, id) \
+#define BOOTINFO0(as, base, id) \
     do { \
-        stw_p(base, id); \
+        stw_phys(as, base, id); \
         base += 2; \
-        stw_p(base, sizeof(struct bi_record)); \
+        stw_phys(as, base, sizeof(struct bi_record)); \
         base += 2; \
     } while (0)
 
-#define BOOTINFO1(base, id, value) \
+#define BOOTINFO1(as, base, id, value) \
     do { \
-        stw_p(base, id); \
+        stw_phys(as, base, id); \
         base += 2; \
-        stw_p(base, sizeof(struct bi_record) + 4); \
+        stw_phys(as, base, sizeof(struct bi_record) + 4); \
         base += 2; \
-        stl_p(base, value); \
+        stl_phys(as, base, value); \
         base += 4; \
     } while (0)
 
-#define BOOTINFO2(base, id, value1, value2) \
+#define BOOTINFO2(as, base, id, value1, value2) \
     do { \
-        stw_p(base, id); \
+        stw_phys(as, base, id); \
         base += 2; \
-        stw_p(base, sizeof(struct bi_record) + 8); \
+        stw_phys(as, base, sizeof(struct bi_record) + 8); \
         base += 2; \
-        stl_p(base, value1); \
+        stl_phys(as, base, value1); \
         base += 4; \
-        stl_p(base, value2); \
+        stl_phys(as, base, value2); \
         base += 4; \
     } while (0)
 
-#define BOOTINFOSTR(base, id, string) \
+#define BOOTINFOSTR(as, base, id, string) \
     do { \
         int i; \
-        stw_p(base, id); \
+        stw_phys(as, base, id); \
         base += 2; \
-        stw_p(base, \
-                 (sizeof(struct bi_record) + strlen(string) + \
-                  1 /* null termination */ + 3 /* padding */) & ~3); \
+        stw_phys(as, base, \
+                 (sizeof(struct bi_record) + strlen(string) + 2) & ~1); \
         base += 2; \
         for (i = 0; string[i]; i++) { \
-            stb_p(base++, string[i]); \
+            stb_phys(as, base++, string[i]); \
         } \
-        stb_p(base++, 0); \
-        base = QEMU_ALIGN_PTR_UP(base, 4); \
+        stb_phys(as, base++, 0); \
+        base = (base + 1) & ~1; \
     } while (0)
 
-#define BOOTINFODATA(base, id, data, len) \
+#define BOOTINFODATA(as, base, id, data, len) \
     do { \
         int i; \
-        stw_p(base, id); \
+        stw_phys(as, base, id); \
         base += 2; \
-        stw_p(base, \
-                 (sizeof(struct bi_record) + len + \
-                  2 /* length field */ + 3 /* padding */) & ~3); \
+        stw_phys(as, base, \
+                 (sizeof(struct bi_record) + len + 3) & ~1); \
         base += 2; \
-        stw_p(base, len); \
+        stw_phys(as, base, len); \
         base += 2; \
         for (i = 0; i < len; ++i) { \
-            stb_p(base++, data[i]); \
+            stb_phys(as, base++, data[i]); \
         } \
-        base = QEMU_ALIGN_PTR_UP(base, 4); \
+        base = (base + 1) & ~1; \
     } while (0)
 #endif

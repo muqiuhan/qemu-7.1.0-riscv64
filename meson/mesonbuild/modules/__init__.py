@@ -12,20 +12,20 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-# This file contains the base representation for import('modname')
+# This file contains the detection logic for external dependencies that
+# are UI-related.
 
 import os
 import typing as T
 
 from .. import build, mesonlib
-from ..mesonlib import relpath, HoldableObject, MachineChoice, OptionKey
+from ..mesonlib import relpath, HoldableObject
 from ..interpreterbase.decorators import noKwargs, noPosargs
 
 if T.TYPE_CHECKING:
     from ..interpreter import Interpreter
     from ..interpreterbase import TYPE_var, TYPE_kwargs
     from ..programs import ExternalProgram
-    from ..wrap import WrapMode
 
 class ModuleState:
     """Object passed to all module methods.
@@ -46,7 +46,7 @@ class ModuleState:
         self.current_lineno = interpreter.current_lineno
         self.environment = interpreter.environment
         self.project_name = interpreter.build.project_name
-        self.project_version = interpreter.build.dep_manifest[interpreter.active_projectname].version
+        self.project_version = interpreter.build.dep_manifest[interpreter.active_projectname]
         # The backend object is under-used right now, but we will need it:
         # https://github.com/mesonbuild/meson/issues/1419
         self.backend = interpreter.backend
@@ -56,9 +56,9 @@ class ModuleState:
         self.man = interpreter.build.get_man()
         self.global_args = interpreter.build.global_args.host
         self.project_args = interpreter.build.projects_args.host.get(interpreter.subproject, {})
-        self.build_machine = T.cast('MachineHolder', interpreter.builtin['build_machine']).held_object
-        self.host_machine = T.cast('MachineHolder', interpreter.builtin['host_machine']).held_object
-        self.target_machine = T.cast('MachineHolder', interpreter.builtin['target_machine']).held_object
+        self.build_machine = interpreter.builtin['build_machine'].held_object
+        self.host_machine = interpreter.builtin['host_machine'].held_object
+        self.target_machine = interpreter.builtin['target_machine'].held_object
         self.current_node = interpreter.current_node
 
     def get_include_args(self, include_dirs: T.Iterable[T.Union[str, build.IncludeDirs]], prefix: str = '-I') -> T.List[str]:
@@ -72,16 +72,25 @@ class ModuleState:
         for dirs in include_dirs:
             if isinstance(dirs, str):
                 dirs_str += [f'{prefix}{dirs}']
-            else:
-                dirs_str.extend([f'{prefix}{i}' for i in dirs.to_string_list(srcdir, builddir)])
-                dirs_str.extend([f'{prefix}{i}' for i in dirs.get_extra_build_dirs()])
+                continue
+
+            # Should be build.IncludeDirs object.
+            basedir = dirs.get_curdir()
+            for d in dirs.get_incdirs():
+                expdir = os.path.join(basedir, d)
+                srctreedir = os.path.join(srcdir, expdir)
+                buildtreedir = os.path.join(builddir, expdir)
+                dirs_str += [f'{prefix}{buildtreedir}',
+                             f'{prefix}{srctreedir}']
+            for d in dirs.get_extra_build_dirs():
+                dirs_str += [f'{prefix}{d}']
 
         return dirs_str
 
     def find_program(self, prog: T.Union[str, T.List[str]], required: bool = True,
                      version_func: T.Optional[T.Callable[['ExternalProgram'], str]] = None,
-                     wanted: T.Optional[str] = None, silent: bool = False) -> 'ExternalProgram':
-        return self._interpreter.find_program_impl(prog, required=required, version_func=version_func, wanted=wanted, silent=silent)
+                     wanted: T.Optional[str] = None) -> 'ExternalProgram':
+        return self._interpreter.find_program_impl(prog, required=required, version_func=version_func, wanted=wanted)
 
     def test(self, args: T.Tuple[str, T.Union[build.Executable, build.Jar, 'ExternalProgram', mesonlib.File]],
              workdir: T.Optional[str] = None,
@@ -91,17 +100,8 @@ class ModuleState:
                   'env': env,
                   'depends': depends,
                   }
-        # typed_* takes a list, and gives a tuple to func_test. Violating that constraint
-        # makes the universe (or at least use of this function) implode
-        real_args = list(args)
         # TODO: Use interpreter internal API, but we need to go through @typed_kwargs
-        self._interpreter.func_test(self.current_node, real_args, kwargs)
-
-    def get_option(self, name: str, subproject: str = '',
-                   machine: MachineChoice = MachineChoice.HOST,
-                   lang: T.Optional[str] = None,
-                   module: T.Optional[str] = None) -> T.Union[str, int, bool, 'WrapMode']:
-        return self.environment.coredata.get_option(mesonlib.OptionKey(name, subproject, machine, lang, module))
+        self._interpreter.func_test(self.current_node, args, kwargs)
 
 
 class ModuleObject(HoldableObject):
@@ -186,23 +186,27 @@ def is_module_library(fname):
 
 
 class ModuleReturnValue:
-    def __init__(self, return_value: T.Optional['TYPE_var'],
-                 new_objects: T.Sequence[T.Union['TYPE_var', 'build.ExecutableSerialisation']]) -> None:
+    def __init__(self, return_value: T.Optional['TYPE_var'], new_objects: T.List['TYPE_var']) -> None:
         self.return_value = return_value
-        assert isinstance(new_objects, list)
-        self.new_objects: T.List[T.Union['TYPE_var', 'build.ExecutableSerialisation']] = new_objects
+        assert(isinstance(new_objects, list))
+        self.new_objects = new_objects
 
 class GResourceTarget(build.CustomTarget):
-    pass
+    def __init__(self, name, subdir, subproject, kwargs):
+        super().__init__(name, subdir, subproject, kwargs)
 
 class GResourceHeaderTarget(build.CustomTarget):
-    pass
+    def __init__(self, name, subdir, subproject, kwargs):
+        super().__init__(name, subdir, subproject, kwargs)
 
 class GirTarget(build.CustomTarget):
-    pass
+    def __init__(self, name, subdir, subproject, kwargs):
+        super().__init__(name, subdir, subproject, kwargs)
 
 class TypelibTarget(build.CustomTarget):
-    pass
+    def __init__(self, name, subdir, subproject, kwargs):
+        super().__init__(name, subdir, subproject, kwargs)
 
 class VapiTarget(build.CustomTarget):
-    pass
+    def __init__(self, name, subdir, subproject, kwargs):
+        super().__init__(name, subdir, subproject, kwargs)

@@ -27,7 +27,7 @@ typedef enum SemihostingTarget {
 } SemihostingTarget;
 
 #ifdef CONFIG_USER_ONLY
-static inline bool semihosting_enabled(bool is_user)
+static inline bool semihosting_enabled(void)
 {
     return true;
 }
@@ -52,13 +52,7 @@ static inline const char *semihosting_get_cmdline(void)
     return NULL;
 }
 #else /* !CONFIG_USER_ONLY */
-/**
- * semihosting_enabled:
- * @is_user: true if guest code is in usermode (i.e. not privileged)
- *
- * Return true if guest code is allowed to make semihosting calls.
- */
-bool semihosting_enabled(bool is_user);
+bool semihosting_enabled(void);
 SemihostingTarget semihosting_get_target(void);
 const char *semihosting_get_arg(int i);
 int semihosting_get_argc(void);

@@ -26,7 +26,6 @@
 #include "sysemu/tpm_backend.h"
 #include "sysemu/tpm_util.h"
 #include "sysemu/reset.h"
-#include "sysemu/xen.h"
 #include "tpm_prop.h"
 #include "tpm_ppi.h"
 #include "trace.h"
@@ -309,11 +308,7 @@ static void tpm_crb_realize(DeviceState *dev, Error **errp)
                      TPM_PPI_ADDR_BASE, OBJECT(s));
     }
 
-    if (xen_enabled()) {
-        tpm_crb_reset(dev);
-    } else {
-        qemu_register_reset(tpm_crb_reset, dev);
-    }
+    qemu_register_reset(tpm_crb_reset, dev);
 }
 
 static void tpm_crb_class_init(ObjectClass *klass, void *data)

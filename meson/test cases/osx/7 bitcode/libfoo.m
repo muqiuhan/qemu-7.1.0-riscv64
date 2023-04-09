@@ -4,3 +4,4 @@
 int EXPORT_PUBLIC libfoo(void) {
   return 0;
 }
+

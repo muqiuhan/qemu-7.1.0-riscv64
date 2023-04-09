@@ -107,9 +107,7 @@ static void qxl_render_update_area_unlocked(PCIQXLDevice *qxl)
         qxl->guest_primary.resized = 0;
         qxl->guest_primary.data = qxl_phys2virt(qxl,
                                                 qxl->guest_primary.surface.mem,
-                                                MEMSLOT_GROUP_GUEST,
-                                                qxl->guest_primary.abs_stride
-                                                * height);
+                                                MEMSLOT_GROUP_GUEST);
         if (!qxl->guest_primary.data) {
             goto end;
         }
@@ -230,8 +228,7 @@ static void qxl_unpack_chunks(void *dest, size_t size, PCIQXLDevice *qxl,
         if (offset == size) {
             return;
         }
-        chunk = qxl_phys2virt(qxl, chunk->next_chunk, group_id,
-                              sizeof(QXLDataChunk) + chunk->data_size);
+        chunk = qxl_phys2virt(qxl, chunk->next_chunk, group_id);
         if (!chunk) {
             return;
         }
@@ -298,8 +295,7 @@ fail:
 /* called from spice server thread context only */
 int qxl_render_cursor(PCIQXLDevice *qxl, QXLCommandExt *ext)
 {
-    QXLCursorCmd *cmd = qxl_phys2virt(qxl, ext->cmd.data, ext->group_id,
-                                      sizeof(QXLCursorCmd));
+    QXLCursorCmd *cmd = qxl_phys2virt(qxl, ext->cmd.data, ext->group_id);
     QXLCursor *cursor;
     QEMUCursor *c;
 
@@ -318,15 +314,7 @@ int qxl_render_cursor(PCIQXLDevice *qxl, QXLCommandExt *ext)
     }
     switch (cmd->type) {
     case QXL_CURSOR_SET:
-        /* First read the QXLCursor to get QXLDataChunk::data_size ... */
-        cursor = qxl_phys2virt(qxl, cmd->u.set.shape, ext->group_id,
-                               sizeof(QXLCursor));
-        if (!cursor) {
-            return 1;
-        }
-        /* Then read including the chunked data following QXLCursor. */
-        cursor = qxl_phys2virt(qxl, cmd->u.set.shape, ext->group_id,
-                               sizeof(QXLCursor) + cursor->chunk.data_size);
+        cursor = qxl_phys2virt(qxl, cmd->u.set.shape, ext->group_id);
         if (!cursor) {
             return 1;
         }

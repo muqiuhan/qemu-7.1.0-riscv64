@@ -19,6 +19,11 @@
 #include "migration/vmstate.h"
 #include "qemu/log.h"
 
+static WatchdogTimerModel model = {
+    .wdt_name = TYPE_WDT_DIAG288,
+    .wdt_description = "diag288 device for s390x platform",
+};
+
 static const VMStateDescription vmstate_diag288 = {
     .name = "vmstate_diag288",
     .version_id = 0,
@@ -133,6 +138,7 @@ static const TypeInfo wdt_diag288_info = {
 
 static void wdt_diag288_register_types(void)
 {
+    watchdog_add_model(&model);
     type_register_static(&wdt_diag288_info);
 }
 

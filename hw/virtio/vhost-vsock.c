@@ -70,10 +70,14 @@ static int vhost_vsock_set_running(VirtIODevice *vdev, int start)
 static void vhost_vsock_set_status(VirtIODevice *vdev, uint8_t status)
 {
     VHostVSockCommon *vvc = VHOST_VSOCK_COMMON(vdev);
-    bool should_start = virtio_device_should_start(vdev, status);
+    bool should_start = status & VIRTIO_CONFIG_S_DRIVER_OK;
     int ret;
 
-    if (vhost_dev_is_started(&vvc->vhost_dev) == should_start) {
+    if (!vdev->vm_running) {
+        should_start = false;
+    }
+
+    if (vvc->vhost_dev.started == should_start) {
         return;
     }
 

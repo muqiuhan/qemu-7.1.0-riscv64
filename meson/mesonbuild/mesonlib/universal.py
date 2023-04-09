@@ -28,7 +28,6 @@ from tempfile import TemporaryDirectory
 import typing as T
 import uuid
 import textwrap
-import copy
 
 from mesonbuild import mlog
 
@@ -36,7 +35,8 @@ if T.TYPE_CHECKING:
     from .._typing import ImmutableListProtocol
     from ..build import ConfigurationData
     from ..coredata import KeyedOptionDictType, UserOption
-    from ..compilers.compilers import Compiler
+    from ..compilers.compilers import CompilerType
+    from ..interpreterbase import ObjectHolder
 
 FileOrString = T.Union['File', str]
 
@@ -45,6 +45,7 @@ _U = T.TypeVar('_U')
 
 __all__ = [
     'GIT',
+    'an_unpicklable_object',
     'python_command',
     'project_meson_versions',
     'HoldableObject',
@@ -62,6 +63,7 @@ __all__ = [
     'OptionKey',
     'dump_conf_header',
     'OptionOverrideProxy',
+    'OptionProxy',
     'OptionType',
     'OrderedSet',
     'PerMachine',
@@ -83,11 +85,11 @@ __all__ = [
     'detect_vcs',
     'do_conf_file',
     'do_conf_str',
+    'do_define',
     'do_replacement',
     'exe_exists',
     'expand_arguments',
     'extract_as_list',
-    'generate_list',
     'get_compiler_for_source',
     'get_filenames_templates_dict',
     'get_library_dirs',
@@ -155,7 +157,7 @@ if os.path.basename(sys.executable) == 'meson.exe':
     python_command = [sys.executable, 'runpython']
 else:
     python_command = [sys.executable]
-_meson_command: T.Optional['ImmutableListProtocol[str]'] = None
+_meson_command = None
 
 class MesonException(Exception):
     '''Exceptions thrown by Meson'''
@@ -230,7 +232,7 @@ def set_meson_command(mainfile: str) -> None:
         mlog.log(f'meson_command is {_meson_command!r}')
 
 
-def get_meson_command() -> T.Optional['ImmutableListProtocol[str]']:
+def get_meson_command() -> T.Optional[T.List[str]]:
     return _meson_command
 
 
@@ -263,6 +265,12 @@ def check_direntry_issues(direntry_array: T.Union[T.List[T.Union[str, bytes]], s
                 locale but you are trying to access a file system entry called {de!r} which is
                 not pure ASCII. This may cause problems.
                 '''), file=sys.stderr)
+
+
+# Put this in objects that should not get dumped to pickle files
+# by accident.
+import threading
+an_unpicklable_object = threading.Lock()
 
 class HoldableObject(metaclass=abc.ABCMeta):
     ''' Dummy base class for all objects that can be
@@ -396,7 +404,7 @@ class File(HoldableObject):
     @lru_cache(maxsize=None)
     def from_source_file(source_root: str, subdir: str, fname: str) -> 'File':
         if not os.path.isfile(os.path.join(source_root, subdir, fname)):
-            raise MesonException(f'File {fname} does not exist.')
+            raise MesonException('File %s does not exist.' % fname)
         return File(False, subdir, fname)
 
     @staticmethod
@@ -421,11 +429,7 @@ class File(HoldableObject):
             absdir = builddir
         return os.path.join(absdir, self.relative_name())
 
-    @property
-    def suffix(self) -> str:
-        return os.path.splitext(self.fname)[1][1:].lower()
-
-    def endswith(self, ending: T.Union[str, T.Tuple[str, ...]]) -> bool:
+    def endswith(self, ending: str) -> bool:
         return self.fname.endswith(ending)
 
     def split(self, s: str, maxsplit: int = -1) -> T.List[str]:
@@ -449,7 +453,7 @@ class File(HoldableObject):
         return os.path.join(self.subdir, self.fname)
 
 
-def get_compiler_for_source(compilers: T.Iterable['Compiler'], src: 'FileOrString') -> 'Compiler':
+def get_compiler_for_source(compilers: T.Iterable['CompilerType'], src: str) -> 'CompilerType':
     """Given a set of compilers and a source, find the compiler for that source type."""
     for comp in compilers:
         if comp.can_compile(src):
@@ -457,8 +461,8 @@ def get_compiler_for_source(compilers: T.Iterable['Compiler'], src: 'FileOrStrin
     raise MesonException(f'No specified compiler can handle file {src!s}')
 
 
-def classify_unity_sources(compilers: T.Iterable['Compiler'], sources: T.Sequence['FileOrString']) -> T.Dict['Compiler', T.List['FileOrString']]:
-    compsrclist: T.Dict['Compiler', T.List['FileOrString']] = {}
+def classify_unity_sources(compilers: T.Iterable['CompilerType'], sources: T.Iterable[str]) -> T.Dict['CompilerType', T.List[str]]:
+    compsrclist = {}  # type: T.Dict[CompilerType, T.List[str]]
     for src in sources:
         comp = get_compiler_for_source(compilers, src)
         if comp not in compsrclist:
@@ -586,6 +590,7 @@ class PerMachineDefaultable(PerMachine[T.Optional[_T]]):
         return m.default_missing()
 
 
+
 class PerThreeMachineDefaultable(PerMachineDefaultable, PerThreeMachine[T.Optional[_T]]):
     """Extends `PerThreeMachine` with the ability to default from `None`s.
     """
@@ -696,8 +701,6 @@ def darwin_get_object_archs(objpath: str) -> 'ImmutableListProtocol[str]':
     # Convert from lipo-style archs to meson-style CPUs
     stdo = stdo.replace('i386', 'x86')
     stdo = stdo.replace('arm64', 'aarch64')
-    stdo = stdo.replace('ppc7400', 'ppc')
-    stdo = stdo.replace('ppc970', 'ppc')
     # Add generic name for armv7 and armv7s
     if 'armv7' in stdo:
         stdo += ' arm'
@@ -1057,7 +1060,7 @@ if is_windows():
             if c == '\\':
                 num_backslashes += 1
             else:
-                if c == '"' and not num_backslashes % 2:
+                if c == '"' and not (num_backslashes % 2):
                     # unescaped quote, eat it
                     arg += (num_backslashes // 2) * '\\'
                     num_quotes += 1
@@ -1094,7 +1097,7 @@ def join_args(args: T.Iterable[str]) -> str:
 
 
 def do_replacement(regex: T.Pattern[str], line: str, variable_format: str,
-                   confdata: T.Union[T.Dict[str, T.Tuple[str, T.Optional[str]]], 'ConfigurationData']) -> T.Tuple[str, T.Set[str]]:
+                   confdata: 'ConfigurationData') -> T.Tuple[str, T.Set[str]]:
     missing_variables = set()  # type: T.Set[str]
     if variable_format == 'cmake':
         start_tag = '${'
@@ -1117,7 +1120,7 @@ def do_replacement(regex: T.Pattern[str], line: str, variable_format: str,
             varname = match.group(1)
             var_str = ''
             if varname in confdata:
-                var, _ = confdata.get(varname)
+                (var, desc) = confdata.get(varname)
                 if isinstance(var, str):
                     var_str = var
                 elif isinstance(var, int):
@@ -1134,7 +1137,7 @@ def do_replacement(regex: T.Pattern[str], line: str, variable_format: str,
 def do_define(regex: T.Pattern[str], line: str, confdata: 'ConfigurationData', variable_format: str) -> str:
     def get_cmake_define(line: str, confdata: 'ConfigurationData') -> str:
         arr = line.split()
-        define_value = []
+        define_value=[]
         for token in arr[2:]:
             try:
                 (v, desc) = confdata.get(token)
@@ -1181,13 +1184,13 @@ def get_variable_regex(variable_format: str = 'meson') -> T.Pattern[str]:
         raise MesonException(f'Format "{variable_format}" not handled')
     return regex
 
-def do_conf_str(src: str, data: list, confdata: 'ConfigurationData', variable_format: str,
-                encoding: str = 'utf-8') -> T.Tuple[T.List[str], T.Set[str], bool]:
-    def line_is_valid(line: str, variable_format: str) -> bool:
+def do_conf_str (src: str, data: list, confdata: 'ConfigurationData', variable_format: str,
+                 encoding: str = 'utf-8') -> T.Tuple[T.List[str],T.Set[str], bool]:
+    def line_is_valid(line : str, variable_format: str) -> bool:
         if variable_format == 'meson':
             if '#cmakedefine' in line:
                 return False
-        else: # cmake format
+        else: #cmake format
             if '#mesondefine' in line:
                 return False
         return True
@@ -1208,7 +1211,7 @@ def do_conf_str(src: str, data: list, confdata: 'ConfigurationData', variable_fo
             confdata_useless = False
             line = do_define(regex, line, confdata, variable_format)
         else:
-            if not line_is_valid(line, variable_format):
+            if not line_is_valid(line,variable_format):
                 raise MesonException(f'Format error in {src}: saw "{line.strip()}" when format set to "{variable_format}"')
             line, missing = do_replacement(regex, line, variable_format, confdata)
             missing_variables.update(missing)
@@ -1258,8 +1261,6 @@ def dump_conf_header(ofilename: str, cdata: 'ConfigurationData', output_format: 
     elif output_format == 'nasm':
         prelude = CONF_NASM_PRELUDE
         prefix = '%'
-    else:
-        raise MesonBugException(f'Undefined output_format: "{output_format}"')
 
     ofilename_tmp = ofilename + '~'
     with open(ofilename_tmp, 'w', encoding='utf-8') as ofile:
@@ -1300,6 +1301,7 @@ def replace_if_different(dst: str, dst_tmp: str) -> None:
         os.unlink(dst_tmp)
 
 
+
 def listify(item: T.Any, flatten: bool = True) -> T.List[T.Any]:
     '''
     Returns a list with all args embedded in a list if they are not a list.
@@ -1321,11 +1323,11 @@ def extract_as_list(dict_object: T.Dict[_T, _U], key: _T, pop: bool = False) -> 
     '''
     Extracts all values from given dict_object and listifies them.
     '''
-    fetch: T.Callable[[_T], _U] = dict_object.get
+    fetch = dict_object.get
     if pop:
         fetch = dict_object.pop
     # If there's only one key, we don't return a list with one element
-    return listify(fetch(key) or [], flatten=True)
+    return listify(fetch(key, []), flatten=True)
 
 
 def typeslistify(item: 'T.Union[_T, T.Sequence[_T]]',
@@ -1382,7 +1384,7 @@ def partition(pred: T.Callable[[_T], object], iterable: T.Iterable[_T]) -> T.Tup
 def Popen_safe(args: T.List[str], write: T.Optional[str] = None,
                stdout: T.Union[T.TextIO, T.BinaryIO, int] = subprocess.PIPE,
                stderr: T.Union[T.TextIO, T.BinaryIO, int] = subprocess.PIPE,
-               **kwargs: T.Any) -> T.Tuple['subprocess.Popen[str]', str, str]:
+               **kwargs: T.Any) -> T.Tuple[subprocess.Popen, str, str]:
     import locale
     encoding = locale.getpreferredencoding()
     # Redirect stdin to DEVNULL otherwise the command run by us here might mess
@@ -1405,7 +1407,7 @@ def Popen_safe(args: T.List[str], write: T.Optional[str] = None,
 def Popen_safe_legacy(args: T.List[str], write: T.Optional[str] = None,
                       stdout: T.Union[T.TextIO, T.BinaryIO, int] = subprocess.PIPE,
                       stderr: T.Union[T.TextIO, T.BinaryIO, int] = subprocess.PIPE,
-                      **kwargs: T.Any) -> T.Tuple['subprocess.Popen[str]', str, str]:
+                      **kwargs: T.Any) -> T.Tuple[subprocess.Popen, str, str]:
     p = subprocess.Popen(args, universal_newlines=False, close_fds=False,
                          stdout=stdout, stderr=stderr, **kwargs)
     input_ = None  # type: T.Optional[bytes]
@@ -1418,7 +1420,7 @@ def Popen_safe_legacy(args: T.List[str], write: T.Optional[str] = None,
         else:
             o = o.decode(errors='replace').replace('\r\n', '\n')
     if e is not None:
-        if sys.stderr is not None and sys.stderr.encoding:
+        if sys.stderr.encoding:
             e = e.decode(encoding=sys.stderr.encoding, errors='replace').replace('\r\n', '\n')
         else:
             e = e.decode(errors='replace').replace('\r\n', '\n')
@@ -1441,7 +1443,7 @@ def iter_regexin_iter(regexiter: T.Iterable[str], initer: T.Iterable[str]) -> T.
     return None
 
 
-def _substitute_values_check_errors(command: T.List[str], values: T.Dict[str, T.Union[str, T.List[str]]]) -> None:
+def _substitute_values_check_errors(command: T.List[str], values: T.Dict[str, str]) -> None:
     # Error checking
     inregex = ['@INPUT([0-9]+)?@', '@PLAINNAME@', '@BASENAME@']  # type: T.List[str]
     outregex = ['@OUTPUT([0-9]+)?@', '@OUTDIR@']                 # type: T.List[str]
@@ -1469,7 +1471,8 @@ def _substitute_values_check_errors(command: T.List[str], values: T.Dict[str, T.
         # Error out if any output-derived templates are present in the command
         match = iter_regexin_iter(outregex, command)
         if match:
-            raise MesonException(f'Command cannot have {match!r} since there are no outputs')
+            m = 'Command cannot have {!r} since there are no outputs'
+            raise MesonException(m.format(match))
     else:
         # Error out if an invalid @OUTPUTnn@ template was specified
         for each in command:
@@ -1481,7 +1484,7 @@ def _substitute_values_check_errors(command: T.List[str], values: T.Dict[str, T.
                 raise MesonException(m.format(match2.group(), len(values['@OUTPUT@'])))
 
 
-def substitute_values(command: T.List[str], values: T.Dict[str, T.Union[str, T.List[str]]]) -> T.List[str]:
+def substitute_values(command: T.List[str], values: T.Dict[str, str]) -> T.List[str]:
     '''
     Substitute the template strings in the @values dict into the list of
     strings @command and return a new list. For a full list of the templates,
@@ -1490,29 +1493,14 @@ def substitute_values(command: T.List[str], values: T.Dict[str, T.Union[str, T.L
     If multiple inputs/outputs are given in the @values dictionary, we
     substitute @INPUT@ and @OUTPUT@ only if they are the entire string, not
     just a part of it, and in that case we substitute *all* of them.
-
-    The typing of this function is difficult, as only @OUTPUT@ and @INPUT@ can
-    be lists, everything else is a string. However, TypeDict cannot represent
-    this, as you can have optional keys, but not extra keys. We end up just
-    having to us asserts to convince type checkers that this is okay.
-
-    https://github.com/python/mypy/issues/4617
     '''
-
-    def replace(m: T.Match[str]) -> str:
-        v = values[m.group(0)]
-        assert isinstance(v, str), 'for mypy'
-        return v
-
     # Error checking
     _substitute_values_check_errors(command, values)
-
     # Substitution
     outcmd = []  # type: T.List[str]
     rx_keys = [re.escape(key) for key in values if key not in ('@INPUT@', '@OUTPUT@')]
     value_rx = re.compile('|'.join(rx_keys)) if rx_keys else None
     for vv in command:
-        more: T.Optional[str] = None
         if not isinstance(vv, str):
             outcmd.append(vv)
         elif '@INPUT@' in vv:
@@ -1533,22 +1521,15 @@ def substitute_values(command: T.List[str], values: T.Dict[str, T.Union[str, T.L
             else:
                 raise MesonException("Command has '@OUTPUT@' as part of a "
                                      "string and more than one output file")
-
         # Append values that are exactly a template string.
         # This is faster than a string replace.
         elif vv in values:
-            o = values[vv]
-            assert isinstance(o, str), 'for mypy'
-            more = o
+            outcmd.append(values[vv])
         # Substitute everything else with replacement
         elif value_rx:
-            more = value_rx.sub(replace, vv)
+            outcmd.append(value_rx.sub(lambda m: values[m.group(0)], vv))
         else:
-            more = vv
-
-        if more is not None:
-            outcmd.append(more)
-
+            outcmd.append(vv)
     return outcmd
 
 
@@ -1673,7 +1654,7 @@ class TemporaryDirectoryWinProof(TemporaryDirectory):
 
 
 def detect_subprojects(spdir_name: str, current_dir: str = '',
-                       result: T.Optional[T.Dict[str, T.List[str]]] = None) -> T.Dict[str, T.List[str]]:
+                       result: T.Optional[T.Dict[str, T.List[str]]] = None) -> T.Optional[T.Dict[str, T.List[str]]]:
     if result is None:
         result = {}
     spdir = os.path.join(current_dir, spdir_name)
@@ -1733,7 +1714,9 @@ class OrderedSet(T.MutableSet[_T]):
         return 'OrderedSet()'
 
     def __reversed__(self) -> T.Iterator[_T]:
-        return reversed(self.__container.keys())
+        # Mypy is complaining that sets cant be reversed, which is true for
+        # unordered sets, but this is an ordered, set so reverse() makes sense.
+        return reversed(self.__container.keys())  # type: ignore
 
     def add(self, value: _T) -> None:
         self.__container[value] = None
@@ -1757,10 +1740,6 @@ class OrderedSet(T.MutableSet[_T]):
 
     def difference(self, set_: T.Union[T.Set[_T], 'OrderedSet[_T]']) -> 'OrderedSet[_T]':
         return type(self)(e for e in self if e not in set_)
-
-    def difference_update(self, iterable: T.Iterable[_T]) -> None:
-        for item in iterable:
-            self.discard(item)
 
 def relpath(path: str, start: str) -> str:
     # On Windows a relative path can't be evaluated for paths on two different
@@ -1923,12 +1902,14 @@ def run_once(func: T.Callable[..., _T]) -> T.Callable[..., _T]:
     return wrapper
 
 
-def generate_list(func: T.Callable[..., T.Generator[_T, None, None]]) -> T.Callable[..., T.List[_T]]:
-    @wraps(func)
-    def wrapper(*args: T.Any, **kwargs: T.Any) -> T.List[_T]:
-        return list(func(*args, **kwargs))
+class OptionProxy(T.Generic[_T]):
+    def __init__(self, value: _T, choices: T.Optional[T.List[str]] = None):
+        self.value = value
+        self.choices = choices
 
-    return wrapper
+    def set_value(self, v: _T) -> None:
+        # XXX: should this be an error
+        self.value = v
 
 
 class OptionOverrideProxy(collections.abc.MutableMapping):
@@ -1946,16 +1927,15 @@ class OptionOverrideProxy(collections.abc.MutableMapping):
         for o in options:
             self.options.update(o)
 
-    def __getitem__(self, key: 'OptionKey') -> T.Union['UserOption']:
+    def __getitem__(self, key: 'OptionKey') -> T.Union['UserOption', OptionProxy]:
         if key in self.options:
             opt = self.options[key]
             if key in self.overrides:
-                opt = copy.copy(opt)
-                opt.set_value(self.overrides[key])
+                return OptionProxy(opt.validate_value(self.overrides[key]), getattr(opt, 'choices', None))
             return opt
         raise KeyError('Option not found', key)
 
-    def __setitem__(self, key: 'OptionKey', value: T.Union['UserOption']) -> None:
+    def __setitem__(self, key: 'OptionKey', value: T.Union['UserOption', OptionProxy]) -> None:
         self.overrides[key] = value.value
 
     def __delitem__(self, key: 'OptionKey') -> None:
@@ -1971,15 +1951,15 @@ class OptionOverrideProxy(collections.abc.MutableMapping):
         return OptionOverrideProxy(self.overrides.copy(), self.options.copy())
 
 
-class OptionType(enum.IntEnum):
+class OptionType(enum.Enum):
 
     """Enum used to specify what kind of argument a thing is."""
 
     BUILTIN = 0
-    BACKEND = 1
-    BASE = 2
-    COMPILER = 3
-    PROJECT = 4
+    BASE = 1
+    COMPILER = 2
+    PROJECT = 3
+    BACKEND = 4
 
 # This is copied from coredata. There is no way to share this, because this
 # is used in the OptionKey constructor, and the coredata lists are
@@ -2027,7 +2007,7 @@ def _classify_argument(key: 'OptionKey') -> OptionType:
         return OptionType.BASE
     elif key.lang is not None:
         return OptionType.COMPILER
-    elif key.name in _BUILTIN_NAMES or key.module:
+    elif key.name in _BUILTIN_NAMES:
         return OptionType.BUILTIN
     elif key.name.startswith('backend_'):
         assert key.machine is MachineChoice.HOST, str(key)
@@ -2047,7 +2027,7 @@ class OptionKey:
     internally easier to reason about and produce.
     """
 
-    __slots__ = ['name', 'subproject', 'machine', 'lang', '_hash', 'type', 'module']
+    __slots__ = ['name', 'subproject', 'machine', 'lang', '_hash', 'type']
 
     name: str
     subproject: str
@@ -2055,13 +2035,10 @@ class OptionKey:
     lang: T.Optional[str]
     _hash: int
     type: OptionType
-    module: T.Optional[str]
 
     def __init__(self, name: str, subproject: str = '',
                  machine: MachineChoice = MachineChoice.HOST,
-                 lang: T.Optional[str] = None,
-                 module: T.Optional[str] = None,
-                 _type: T.Optional[OptionType] = None):
+                 lang: T.Optional[str] = None, _type: T.Optional[OptionType] = None):
         # the _type option to the constructor is kinda private. We want to be
         # able tos ave the state and avoid the lookup function when
         # pickling/unpickling, but we need to be able to calculate it when
@@ -2070,8 +2047,7 @@ class OptionKey:
         object.__setattr__(self, 'subproject', subproject)
         object.__setattr__(self, 'machine', machine)
         object.__setattr__(self, 'lang', lang)
-        object.__setattr__(self, 'module', module)
-        object.__setattr__(self, '_hash', hash((name, subproject, machine, lang, module)))
+        object.__setattr__(self, '_hash', hash((name, subproject, machine, lang)))
         if _type is None:
             _type = _classify_argument(self)
         object.__setattr__(self, 'type', _type)
@@ -2086,7 +2062,6 @@ class OptionKey:
             'machine': self.machine,
             'lang': self.lang,
             '_type': self.type,
-            'module': self.module,
         }
 
     def __setstate__(self, state: T.Dict[str, T.Any]) -> None:
@@ -2103,17 +2078,22 @@ class OptionKey:
     def __hash__(self) -> int:
         return self._hash
 
-    def _to_tuple(self) -> T.Tuple[str, OptionType, str, str, MachineChoice, str]:
-        return (self.subproject, self.type, self.lang or '', self.module or '', self.machine, self.name)
-
     def __eq__(self, other: object) -> bool:
         if isinstance(other, OptionKey):
-            return self._to_tuple() == other._to_tuple()
+            return (
+                self.name == other.name and
+                self.subproject == other.subproject and
+                self.machine is other.machine and
+                self.lang == other.lang)
         return NotImplemented
 
     def __lt__(self, other: object) -> bool:
         if isinstance(other, OptionKey):
-            return self._to_tuple() < other._to_tuple()
+            return (
+                self.name < other.name and
+                self.subproject < other.subproject and
+                self.machine < other.machine and
+                self.lang < other.lang)
         return NotImplemented
 
     def __str__(self) -> str:
@@ -2122,14 +2102,12 @@ class OptionKey:
             out = f'{self.lang}_{out}'
         if self.machine is MachineChoice.BUILD:
             out = f'build.{out}'
-        if self.module:
-            out = f'{self.module}.{out}'
         if self.subproject:
             out = f'{self.subproject}:{out}'
         return out
 
     def __repr__(self) -> str:
-        return f'OptionKey({self.name!r}, {self.subproject!r}, {self.machine!r}, {self.lang!r}, {self.module!r}, {self.type!r})'
+        return f'OptionKey({repr(self.name)}, {repr(self.subproject)}, {repr(self.machine)}, {repr(self.lang)})'
 
     @classmethod
     def from_string(cls, raw: str) -> 'OptionKey':
@@ -2143,16 +2121,12 @@ class OptionKey:
         except ValueError:
             subproject, raw2 = '', raw
 
-        module = None
-        for_machine = MachineChoice.HOST
-        try:
-            prefix, raw3 = raw2.split('.')
-            if prefix == 'build':
-                for_machine = MachineChoice.BUILD
-            else:
-                module = prefix
-        except ValueError:
+        if raw2.startswith('build.'):
+            raw3 = raw2.split('.', 1)[1]
+            for_machine = MachineChoice.BUILD
+        else:
             raw3 = raw2
+            for_machine = MachineChoice.HOST
 
         from ..compilers import all_languages
         if any(raw3.startswith(f'{l}_') for l in all_languages):
@@ -2160,13 +2134,12 @@ class OptionKey:
         else:
             lang, opt = None, raw3
         assert ':' not in opt
-        assert '.' not in opt
+        assert 'build.' not in opt
 
-        return cls(opt, subproject, for_machine, lang, module)
+        return cls(opt, subproject, for_machine, lang)
 
     def evolve(self, name: T.Optional[str] = None, subproject: T.Optional[str] = None,
-               machine: T.Optional[MachineChoice] = None, lang: T.Optional[str] = '',
-               module: T.Optional[str] = '') -> 'OptionKey':
+               machine: T.Optional[MachineChoice] = None, lang: T.Optional[str] = '') -> 'OptionKey':
         """Create a new copy of this key, but with alterted members.
 
         For example:
@@ -2182,7 +2155,6 @@ class OptionKey:
             subproject if subproject is not None else self.subproject,
             machine if machine is not None else self.machine,
             lang if lang != '' else self.lang,
-            module if module != '' else self.module
         )
 
     def as_root(self) -> 'OptionKey':

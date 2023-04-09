@@ -87,16 +87,17 @@ static void save_buffer(const uint8_t *buf, size_t buf_size)
 static void compare_vmstate(const uint8_t *wire, size_t size)
 {
     QEMUFile *f = open_test_file(false);
-    g_autofree uint8_t *result = g_malloc(size);
+    uint8_t result[size];
 
     /* read back as binary */
 
-    g_assert_cmpint(qemu_get_buffer(f, result, size), ==, size);
+    g_assert_cmpint(qemu_get_buffer(f, result, sizeof(result)), ==,
+                    sizeof(result));
     g_assert(!qemu_file_get_error(f));
 
     /* Compare that what is on the file is the same that what we
        expected to be there */
-    SUCCESS(memcmp(result, wire, size));
+    SUCCESS(memcmp(result, wire, sizeof(result)));
 
     /* Must reach EOF */
     qemu_get_byte(f);

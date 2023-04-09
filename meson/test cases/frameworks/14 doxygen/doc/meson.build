@@ -14,3 +14,4 @@ html_target = custom_target('spede-docs',
                             command: [doxygen, doxyfile],
                             install: true,
                             install_dir: datadir)
+

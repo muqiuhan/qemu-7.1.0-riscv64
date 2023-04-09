@@ -354,7 +354,7 @@ static void qemu_init_sigbus(void)
 
     /*
      * ALERT: when modifying this, take care that SIGBUS forwarding in
-     * qemu_prealloc_mem() will continue working as expected.
+     * os_mem_prealloc() will continue working as expected.
      */
     memset(&action, 0, sizeof(action));
     action.sa_flags = SA_SIGINFO;
@@ -437,19 +437,18 @@ void qemu_wait_io_event(CPUState *cpu)
 
 void cpus_kick_thread(CPUState *cpu)
 {
+#ifndef _WIN32
+    int err;
+
     if (cpu->thread_kicked) {
         return;
     }
     cpu->thread_kicked = true;
-
-#ifndef _WIN32
-    int err = pthread_kill(cpu->thread->thread, SIG_IPI);
+    err = pthread_kill(cpu->thread->thread, SIG_IPI);
     if (err && err != ESRCH) {
         fprintf(stderr, "qemu:%s: %s", __func__, strerror(err));
         exit(1);
     }
-#else
-    qemu_sem_post(&cpu->sem);
 #endif
 }
 
@@ -616,13 +615,6 @@ void cpus_register_accel(const AccelOpsClass *ops)
     assert(ops != NULL);
     assert(ops->create_vcpu_thread != NULL); /* mandatory */
     cpus_accel = ops;
-}
-
-const AccelOpsClass *cpus_get_accel(void)
-{
-    /* broken if we call this early */
-    assert(cpus_accel);
-    return cpus_accel;
 }
 
 void qemu_init_vcpu(CPUState *cpu)

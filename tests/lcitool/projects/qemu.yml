@@ -3,7 +3,6 @@ packages:
  - alsa
  - bash
  - bc
- - bison
  - brlapi
  - bzip2
  - bzip2-libs
@@ -20,7 +19,6 @@ packages:
  - diffutils
  - dtrace
  - findutils
- - flex
  - fuse3
  - g++
  - gcc
@@ -28,7 +26,6 @@ packages:
  - gettext
  - genisoimage
  - glib2
- - glib2-native
  - glib2-static
  - glusterfs
  - gnutls
@@ -101,7 +98,6 @@ packages:
  - sdl2-image
  - sed
  - snappy
- - sndio
  - sparse
  - spice-protocol
  - spice-server

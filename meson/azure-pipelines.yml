@@ -10,14 +10,12 @@ trigger:
     include:
       - 'mesonbuild'
       - 'test cases'
-      - 'unittests'
       - 'azure-pipelines.yml'
       - 'ci/azure-steps.yml'
       - 'run_project_tests.py'
       - 'run_tests.py'
       - 'run_unittests.py'
 pr:
-  autoCancel: true
   branches:
     include:
     - '*'
@@ -25,7 +23,6 @@ pr:
     include:
       - 'mesonbuild'
       - 'test cases'
-      - 'unittests'
       - 'azure-pipelines.yml'
       - 'ci/azure-steps.yml'
       - 'run_project_tests.py'
@@ -65,12 +62,7 @@ jobs:
       versionSpec: '3.6'
       addToPath: true
       architecture: 'x64'
-  - task: PowerShell@2
-    inputs:
-      targetType: 'filePath'
-      filePath: .\ci\run.ps1
-    env:
-      MESON_CI_JOBNAME: azure-$(System.JobName)
+  - template: ci/azure-steps.yml
 
 - job: vs2019
   timeoutInMinutes: 120
@@ -99,9 +91,4 @@ jobs:
       versionSpec: '3.7'
       addToPath: true
       architecture: 'x64'
-  - task: PowerShell@2
-    inputs:
-      targetType: 'filePath'
-      filePath: .\ci\run.ps1
-    env:
-      MESON_CI_JOBNAME: azure-$(System.JobName)
+  - template: ci/azure-steps.yml

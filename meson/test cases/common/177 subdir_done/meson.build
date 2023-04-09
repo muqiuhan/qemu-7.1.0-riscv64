@@ -9,3 +9,4 @@ endif
 
 executable('main', 'main.cpp')
 error('Unreachable')
+

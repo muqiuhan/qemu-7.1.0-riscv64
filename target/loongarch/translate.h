@@ -29,8 +29,7 @@ typedef struct DisasContext {
     DisasContextBase base;
     target_ulong page_start;
     uint32_t opcode;
-    uint16_t mem_idx;
-    uint16_t plv;
+    int mem_idx;
     TCGv zero;
     /* Space for 3 operands plus 1 extra for address computation. */
     TCGv temp[4];

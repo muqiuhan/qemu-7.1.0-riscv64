@@ -159,19 +159,16 @@ static void test_qmp_protocol(void)
     qtest_quit(qts);
 }
 
-#ifndef _WIN32
-
 /* Out-of-band tests */
 
-char *tmpdir;
+char tmpdir[] = "/tmp/qmp-test-XXXXXX";
 char *fifo_name;
 
 static void setup_blocking_cmd(void)
 {
-    GError *err = NULL;
-    tmpdir = g_dir_make_tmp("qmp-test-XXXXXX", &err);
-    g_assert_no_error(err);
-
+    if (!mkdtemp(tmpdir)) {
+        g_error("mkdtemp: %s", strerror(errno));
+    }
     fifo_name = g_strdup_printf("%s/fifo", tmpdir);
     if (mkfifo(fifo_name, 0666)) {
         g_error("mkfifo: %s", strerror(errno));
@@ -182,7 +179,6 @@ static void cleanup_blocking_cmd(void)
 {
     unlink(fifo_name);
     rmdir(tmpdir);
-    g_free(tmpdir);
 }
 
 static void send_cmd_that_blocks(QTestState *s, const char *id)
@@ -281,8 +277,6 @@ static void test_qmp_oob(void)
     qtest_quit(qts);
 }
 
-#endif /* _WIN32 */
-
 /* Preconfig tests */
 
 static void test_qmp_preconfig(void)
@@ -342,10 +336,7 @@ int main(int argc, char *argv[])
     g_test_init(&argc, &argv, NULL);
 
     qtest_add_func("qmp/protocol", test_qmp_protocol);
-#ifndef _WIN32
-    /* This case calls mkfifo() which does not exist on win32 */
     qtest_add_func("qmp/oob", test_qmp_oob);
-#endif
     qtest_add_func("qmp/preconfig", test_qmp_preconfig);
     qtest_add_func("qmp/missing-any-arg", test_qmp_missing_any_arg);
 

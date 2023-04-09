@@ -43,10 +43,6 @@ typedef struct AccelClass {
     bool (*has_memory)(MachineState *ms, AddressSpace *as,
                        hwaddr start_addr, hwaddr size);
 #endif
-
-    /* gdbstub related hooks */
-    int (*gdbstub_supported_sstep_flags)(void);
-
     bool *allowed;
     /*
      * Array of global properties that would be applied when specific
@@ -95,13 +91,5 @@ void accel_cpu_instance_init(CPUState *cpu);
  * @errp: currently unused.
  */
 bool accel_cpu_realizefn(CPUState *cpu, Error **errp);
-
-/**
- * accel_supported_gdbstub_sstep_flags:
- *
- * Returns the supported single step modes for the configured
- * accelerator.
- */
-int accel_supported_gdbstub_sstep_flags(void);
 
 #endif /* QEMU_ACCEL_H */

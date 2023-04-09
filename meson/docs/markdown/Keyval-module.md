@@ -55,4 +55,4 @@ option](Build-options.md).
 * The first (and only) argument is the path to the configuration file to
   load (usually ".config").
 
-**Returns**: a [[@dict]] object.
+**Returns**: a [dictionary object](Reference-manual.md#dictionary-object).

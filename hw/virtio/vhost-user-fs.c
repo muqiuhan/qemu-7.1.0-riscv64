@@ -20,7 +20,6 @@
 #include "hw/virtio/virtio-bus.h"
 #include "hw/virtio/virtio-access.h"
 #include "qemu/error-report.h"
-#include "hw/virtio/vhost.h"
 #include "hw/virtio/vhost-user-fs.h"
 #include "monitor/monitor.h"
 #include "sysemu/sysemu.h"
@@ -32,7 +31,6 @@ static const int user_feature_bits[] = {
     VIRTIO_F_NOTIFY_ON_EMPTY,
     VIRTIO_F_RING_PACKED,
     VIRTIO_F_IOMMU_PLATFORM,
-    VIRTIO_F_RING_RESET,
 
     VHOST_INVALID_FEATURE_BIT
 };
@@ -76,7 +74,7 @@ static void vuf_start(VirtIODevice *vdev)
     }
 
     fs->vhost_dev.acked_features = vdev->guest_features;
-    ret = vhost_dev_start(&fs->vhost_dev, vdev, true);
+    ret = vhost_dev_start(&fs->vhost_dev, vdev);
     if (ret < 0) {
         error_report("Error starting vhost: %d", -ret);
         goto err_guest_notifiers;
@@ -110,7 +108,7 @@ static void vuf_stop(VirtIODevice *vdev)
         return;
     }
 
-    vhost_dev_stop(&fs->vhost_dev, vdev, true);
+    vhost_dev_stop(&fs->vhost_dev, vdev);
 
     ret = k->set_guest_notifiers(qbus->parent, fs->vhost_dev.nvqs, false);
     if (ret < 0) {
@@ -124,9 +122,13 @@ static void vuf_stop(VirtIODevice *vdev)
 static void vuf_set_status(VirtIODevice *vdev, uint8_t status)
 {
     VHostUserFS *fs = VHOST_USER_FS(vdev);
-    bool should_start = virtio_device_should_start(vdev, status);
+    bool should_start = status & VIRTIO_CONFIG_S_DRIVER_OK;
 
-    if (vhost_dev_is_started(&fs->vhost_dev) == should_start) {
+    if (!vdev->vm_running) {
+        should_start = false;
+    }
+
+    if (fs->vhost_dev.started == should_start) {
         return;
     }
 

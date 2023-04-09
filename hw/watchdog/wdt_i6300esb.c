@@ -457,6 +457,11 @@ static void i6300esb_exit(PCIDevice *dev)
     timer_free(d->timer);
 }
 
+static WatchdogTimerModel model = {
+    .wdt_name = "i6300esb",
+    .wdt_description = "Intel 6300ESB",
+};
+
 static void i6300esb_class_init(ObjectClass *klass, void *data)
 {
     DeviceClass *dc = DEVICE_CLASS(klass);
@@ -488,6 +493,7 @@ static const TypeInfo i6300esb_info = {
 
 static void i6300esb_register_types(void)
 {
+    watchdog_add_model(&model);
     type_register_static(&i6300esb_info);
 }
 

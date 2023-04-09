@@ -11,3 +11,4 @@ TAG_PUBLIC int run_tests(void) {
 
   return (int)cudaDeviceSynchronize();
 }
+

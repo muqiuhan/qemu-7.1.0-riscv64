@@ -12,29 +12,25 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-import os
-import typing as T
-
 from . import ExtensionModule
-from .. import mesonlib
-from ..interpreterbase import FeatureNew, noKwargs, typed_pos_args
 
-if T.TYPE_CHECKING:
-    from ..interpreter import Interpreter
-    from . import ModuleState
+from .. import mesonlib
+from ..mesonlib import typeslistify
+from ..interpreterbase import FeatureNew, noKwargs, InvalidCode
+
+import os
 
 class KeyvalModule(ExtensionModule):
 
     @FeatureNew('Keyval Module', '0.55.0')
-    def __init__(self, interp: 'Interpreter'):
-        super().__init__(interp)
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
         self.methods.update({
             'load': self.load,
         })
 
-    @staticmethod
-    def _load_file(path_to_config: str) -> T.Dict[str, str]:
-        result: T.Dict[str, str] = {}
+    def _load_file(self, path_to_config):
+        result = dict()
         try:
             with open(path_to_config, encoding='utf-8') as f:
                 for line in f:
@@ -53,9 +49,12 @@ class KeyvalModule(ExtensionModule):
         return result
 
     @noKwargs
-    @typed_pos_args('keyval.laod', (str, mesonlib.File))
-    def load(self, state: 'ModuleState', args: T.Tuple['mesonlib.FileOrString'], kwargs: T.Dict[str, T.Any]) -> T.Dict[str, str]:
-        s = args[0]
+    def load(self, state, args, kwargs):
+        sources = typeslistify(args, (str, mesonlib.File))
+        if len(sources) != 1:
+            raise InvalidCode('load takes only one file input.')
+
+        s = sources[0]
         is_built = False
         if isinstance(s, mesonlib.File):
             is_built = is_built or s.is_built
@@ -69,5 +68,5 @@ class KeyvalModule(ExtensionModule):
         return self._load_file(s)
 
 
-def initialize(interp: 'Interpreter') -> KeyvalModule:
-    return KeyvalModule(interp)
+def initialize(*args, **kwargs):
+    return KeyvalModule(*args, **kwargs)

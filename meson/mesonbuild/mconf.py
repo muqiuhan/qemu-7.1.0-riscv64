@@ -17,7 +17,6 @@ import shutil
 import os
 import textwrap
 import typing as T
-import collections
 
 from . import build
 from . import coredata
@@ -65,6 +64,7 @@ class Conf:
         # XXX: is there a case where this can actually remain false?
         self.has_choices = False
         self.all_subprojects: T.Set[str] = set()
+        self.yielding_options: T.Set[OptionKey] = set()
 
         if os.path.isdir(os.path.join(self.build_dir, 'meson-private')):
             self.build = build.load(self.build_dir)
@@ -149,12 +149,16 @@ class Conf:
                 for l in itertools.zip_longest(name, val, desc, fillvalue=''):
                     print('{:{widths[0]}} {:{widths[1]}} {}'.format(*l, widths=three_column))
 
-    def split_options_per_subproject(self, options: 'coredata.KeyedOptionDictType') -> T.Dict[str, 'coredata.KeyedOptionDictType']:
-        result: T.Dict[str, 'coredata.KeyedOptionDictType'] = {}
+    def split_options_per_subproject(self, options: 'coredata.KeyedOptionDictType') -> T.Dict[str, T.Dict[str, 'UserOption']]:
+        result: T.Dict[str, T.Dict[str, 'UserOption']] = {}
         for k, o in options.items():
+            subproject = k.subproject
             if k.subproject:
-                self.all_subprojects.add(k.subproject)
-            result.setdefault(k.subproject, {})[k] = o
+                k = k.as_root()
+                if o.yielding and k in options:
+                    self.yielding_options.add(k)
+                self.all_subprojects.add(subproject)
+            result.setdefault(subproject, {})[str(k)] = o
         return result
 
     def _add_line(self, name: OptionKey, value, choices, descr) -> None:
@@ -214,10 +218,9 @@ class Conf:
             self.add_title(title)
         for k, o in sorted(options.items()):
             printable_value = o.printable_value()
-            root = k.as_root()
-            if o.yielding and k.subproject and root in self.coredata.options:
+            if k in self.yielding_options:
                 printable_value = '<inherited from main project>'
-            self.add_option(str(root), o.description, printable_value, o.choices)
+            self.add_option(k, o.description, printable_value, o.choices)
 
     def print_conf(self):
         def print_default_values_warning():
@@ -235,23 +238,16 @@ class Conf:
 
         dir_option_names = set(coredata.BUILTIN_DIR_OPTIONS)
         test_option_names = {OptionKey('errorlogs'),
-                             OptionKey('stdsplit')}
+                            OptionKey('stdsplit')}
 
         dir_options: 'coredata.KeyedOptionDictType' = {}
         test_options: 'coredata.KeyedOptionDictType' = {}
         core_options: 'coredata.KeyedOptionDictType' = {}
-        module_options: T.Dict[str, 'coredata.KeyedOptionDictType'] = collections.defaultdict(dict)
         for k, v in self.coredata.options.items():
             if k in dir_option_names:
                 dir_options[k] = v
             elif k in test_option_names:
                 test_options[k] = v
-            elif k.module:
-                # Ignore module options if we did not use that module during
-                # configuration.
-                if self.build and k.module not in self.build.modules:
-                    continue
-                module_options[k.module][k] = v
             elif k.is_builtin():
                 core_options[k] = v
 
@@ -266,13 +262,11 @@ class Conf:
         self.print_options('Core options', host_core_options[''])
         if show_build_options:
             self.print_options('', build_core_options[''])
-        self.print_options('Backend options', {k: v for k, v in self.coredata.options.items() if k.is_backend()})
-        self.print_options('Base options', {k: v for k, v in self.coredata.options.items() if k.is_base()})
+        self.print_options('Backend options', {str(k): v for k, v in self.coredata.options.items() if k.is_backend()})
+        self.print_options('Base options', {str(k): v for k, v in self.coredata.options.items() if k.is_base()})
         self.print_options('Compiler options', host_compiler_options.get('', {}))
         if show_build_options:
             self.print_options('', build_compiler_options.get('', {}))
-        for mod, mod_options in module_options.items():
-            self.print_options(f'{mod} module options', mod_options)
         self.print_options('Directories', dir_options)
         self.print_options('Testing options', test_options)
         self.print_options('Project options', project_options.get('', {}))
@@ -304,7 +298,7 @@ class Conf:
         if not mismatching:
             return
         print("\nThe following option(s) have a different value than the build type default\n")
-        print('               current   default')
+        print(f'               current   default')
         for m in mismatching:
             print(f'{m[0]:21}{m[1]:10}{m[2]:10}')
 

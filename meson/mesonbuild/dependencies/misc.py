@@ -78,12 +78,6 @@ class OpenMPDependency(SystemDependency):
         language = kwargs.get('language')
         super().__init__('openmp', environment, kwargs, language=language)
         self.is_found = False
-        if self.clib_compiler.get_id() == 'nagfor':
-            # No macro defined for OpenMP, but OpenMP 3.1 is supported.
-            self.version = '3.1'
-            self.is_found = True
-            self.compile_args = self.link_args = self.clib_compiler.openmp_flags()
-            return
         if self.clib_compiler.get_id() == 'pgi':
             # through at least PGI 19.4, there is no macro defined for OpenMP, but OpenMP 3.1 is supported.
             self.version = '3.1'
@@ -130,6 +124,10 @@ class ThreadDependency(SystemDependency):
         else:
             self.compile_args = self.clib_compiler.thread_flags(environment)
             self.link_args = self.clib_compiler.thread_link_flags(environment)
+
+    @staticmethod
+    def get_methods() -> T.List[DependencyMethods]:
+        return [DependencyMethods.AUTO, DependencyMethods.CMAKE]
 
 
 class BlocksDependency(SystemDependency):
@@ -264,6 +262,15 @@ class Python3DependencySystem(SystemDependency):
         self.version = sysconfig.get_config_var('py_version')
         self.is_found = True
 
+    @staticmethod
+    def get_methods() -> T.List[DependencyMethods]:
+        if mesonlib.is_windows():
+            return [DependencyMethods.PKGCONFIG, DependencyMethods.SYSCONFIG]
+        elif mesonlib.is_osx():
+            return [DependencyMethods.PKGCONFIG, DependencyMethods.EXTRAFRAMEWORK]
+        else:
+            return [DependencyMethods.PKGCONFIG]
+
     def log_tried(self) -> str:
         return 'sysconfig'
 
@@ -279,6 +286,10 @@ class PcapDependencyConfigTool(ConfigToolDependency):
         self.compile_args = self.get_config_value(['--cflags'], 'compile_args')
         self.link_args = self.get_config_value(['--libs'], 'link_args')
         self.version = self.get_pcap_lib_version()
+
+    @staticmethod
+    def get_methods() -> T.List[DependencyMethods]:
+        return [DependencyMethods.PKGCONFIG, DependencyMethods.CONFIG_TOOL]
 
     def get_pcap_lib_version(self) -> T.Optional[str]:
         # Since we seem to need to run a program to discover the pcap version,
@@ -306,6 +317,13 @@ class CupsDependencyConfigTool(ConfigToolDependency):
         self.compile_args = self.get_config_value(['--cflags'], 'compile_args')
         self.link_args = self.get_config_value(['--ldflags', '--libs'], 'link_args')
 
+    @staticmethod
+    def get_methods() -> T.List[DependencyMethods]:
+        if mesonlib.is_osx():
+            return [DependencyMethods.PKGCONFIG, DependencyMethods.CONFIG_TOOL, DependencyMethods.EXTRAFRAMEWORK, DependencyMethods.CMAKE]
+        else:
+            return [DependencyMethods.PKGCONFIG, DependencyMethods.CONFIG_TOOL, DependencyMethods.CMAKE]
+
 
 class LibWmfDependencyConfigTool(ConfigToolDependency):
 
@@ -318,6 +336,10 @@ class LibWmfDependencyConfigTool(ConfigToolDependency):
             return
         self.compile_args = self.get_config_value(['--cflags'], 'compile_args')
         self.link_args = self.get_config_value(['--libs'], 'link_args')
+
+    @staticmethod
+    def get_methods() -> T.List[DependencyMethods]:
+        return [DependencyMethods.PKGCONFIG, DependencyMethods.CONFIG_TOOL]
 
 
 class LibGCryptDependencyConfigTool(ConfigToolDependency):
@@ -333,6 +355,10 @@ class LibGCryptDependencyConfigTool(ConfigToolDependency):
         self.link_args = self.get_config_value(['--libs'], 'link_args')
         self.version = self.get_config_value(['--version'], 'version')[0]
 
+    @staticmethod
+    def get_methods() -> T.List[DependencyMethods]:
+        return [DependencyMethods.PKGCONFIG, DependencyMethods.CONFIG_TOOL]
+
 
 class GpgmeDependencyConfigTool(ConfigToolDependency):
 
@@ -346,6 +372,10 @@ class GpgmeDependencyConfigTool(ConfigToolDependency):
         self.compile_args = self.get_config_value(['--cflags'], 'compile_args')
         self.link_args = self.get_config_value(['--libs'], 'link_args')
         self.version = self.get_config_value(['--version'], 'version')[0]
+
+    @staticmethod
+    def get_methods() -> T.List[DependencyMethods]:
+        return [DependencyMethods.PKGCONFIG, DependencyMethods.CONFIG_TOOL]
 
 
 class ShadercDependency(SystemDependency):
@@ -375,6 +405,10 @@ class ShadercDependency(SystemDependency):
 
     def log_tried(self) -> str:
         return 'system'
+
+    @staticmethod
+    def get_methods() -> T.List[DependencyMethods]:
+        return [DependencyMethods.SYSTEM, DependencyMethods.PKGCONFIG]
 
 
 class CursesConfigToolDependency(ConfigToolDependency):
@@ -432,7 +466,7 @@ class CursesSystemDependency(SystemDependency):
                             v_minor, _ = self.clib_compiler.get_define('PDC_VER_MINOR', f'#include <{header}>', env, [], [self])
                             self.version = f'{v_major}.{v_minor}'
 
-                        # Check the version if possible, emit a warning if we can't
+                        # Check the version if possible, emit a wraning if we can't
                         req = kwargs.get('version')
                         if req:
                             if self.version:
@@ -447,33 +481,16 @@ class CursesSystemDependency(SystemDependency):
             if self.is_found:
                 break
 
-
-class IconvBuiltinDependency(BuiltinDependency):
-    def __init__(self, name: str, env: 'Environment', kwargs: T.Dict[str, T.Any]):
-        super().__init__(name, env, kwargs)
-        code = '''#include <iconv.h>\n\nint main() {\n    iconv_open("","");\n}''' # [ignore encoding] this is C, not python, Mr. Lint
-
-        if self.clib_compiler.links(code, env)[0]:
-            self.is_found = True
-
-
-class IconvSystemDependency(SystemDependency):
-    def __init__(self, name: str, env: 'Environment', kwargs: T.Dict[str, T.Any]):
-        super().__init__(name, env, kwargs)
-
-        h = self.clib_compiler.has_header('iconv.h', '', env)
-        self.link_args = self.clib_compiler.find_library('iconv', env, [], self.libtype)
-
-        if h[0] and self.link_args:
-            self.is_found = True
+    @staticmethod
+    def get_methods() -> T.List[DependencyMethods]:
+        return [DependencyMethods.SYSTEM]
 
 
 class IntlBuiltinDependency(BuiltinDependency):
     def __init__(self, name: str, env: 'Environment', kwargs: T.Dict[str, T.Any]):
         super().__init__(name, env, kwargs)
-        code = '''#include <libintl.h>\n\nint main() {\n    gettext("Hello world");\n}'''
 
-        if self.clib_compiler.links(code, env)[0]:
+        if self.clib_compiler.has_function('ngettext', '', env)[0]:
             self.is_found = True
 
 
@@ -482,15 +499,10 @@ class IntlSystemDependency(SystemDependency):
         super().__init__(name, env, kwargs)
 
         h = self.clib_compiler.has_header('libintl.h', '', env)
-        self.link_args = self.clib_compiler.find_library('intl', env, [], self.libtype)
+        self.link_args =  self.clib_compiler.find_library('intl', env, [])
 
-        if h[0] and self.link_args:
+        if h and self.link_args:
             self.is_found = True
-
-            if self.static:
-                if not self._add_sub_dependency(iconv_factory(env, self.for_machine, {'static': True})):
-                    self.is_found = False
-                    return
 
 
 @factory_methods({DependencyMethods.PKGCONFIG, DependencyMethods.CONFIG_TOOL, DependencyMethods.SYSTEM})
@@ -591,7 +603,7 @@ python3_factory = DependencyFactory(
     system_class=Python3DependencySystem,
     # There is no version number in the macOS version number
     framework_name='Python',
-    # There is a python in /System/Library/Frameworks, but that's python 2.x,
+    # There is a python in /System/Library/Frameworks, but thats python 2.x,
     # Python 3 will always be in /Library
     extra_kwargs={'paths': ['/Library/Frameworks']},
 )
@@ -601,13 +613,6 @@ threads_factory = DependencyFactory(
     [DependencyMethods.SYSTEM, DependencyMethods.CMAKE],
     cmake_name='Threads',
     system_class=ThreadDependency,
-)
-
-iconv_factory = DependencyFactory(
-    'iconv',
-    [DependencyMethods.BUILTIN, DependencyMethods.SYSTEM],
-    builtin_class=IconvBuiltinDependency,
-    system_class=IconvSystemDependency,
 )
 
 intl_factory = DependencyFactory(

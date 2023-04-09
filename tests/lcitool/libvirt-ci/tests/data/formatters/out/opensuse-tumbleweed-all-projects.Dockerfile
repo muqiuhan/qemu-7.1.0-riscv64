@@ -32,9 +32,7 @@ RUN zypper dist-upgrade -y && \
            device-mapper-devel \
            diffutils \
            dwarves \
-           e2fsprogs \
            ebtables \
-           expect \
            findutils \
            flex \
            fuse-devel \
@@ -99,11 +97,9 @@ RUN zypper dist-upgrade -y && \
            libgcrypt-devel \
            libgnutls-devel \
            libgovirt-devel \
-           libguestfs-devel \
            libiscsi-devel \
            libjpeg8-devel \
            libjson-c-devel \
-           libnbd-devel \
            libndctl-devel \
            libnettle-devel \
            libnfs-devel \
@@ -127,7 +123,6 @@ RUN zypper dist-upgrade -y && \
            libtasn1-devel \
            libtirpc-devel \
            libtool \
-           libtorrent-devel \
            libubsan1 \
            libudev-devel \
            liburing-devel \
@@ -144,7 +139,6 @@ RUN zypper dist-upgrade -y && \
            libzstd-devel \
            llvm \
            lttng-ust-devel \
-           lua-devel \
            lvm2 \
            lzo-devel \
            make \
@@ -201,10 +195,10 @@ RUN zypper dist-upgrade -y && \
            python3-PyYAML \
            python3-Sphinx \
            python3-base \
-           python3-boto3 \
            python3-dbus-python \
            python3-devel \
            python3-docutils \
+           python3-flake8 \
            python3-gobject \
            python3-libxml2-python \
            python3-lxml \
@@ -215,7 +209,6 @@ RUN zypper dist-upgrade -y && \
            python3-requests \
            python3-setuptools \
            python3-sphinx_rtd_theme \
-           python39-flake8 \
            qemu \
            qemu-tools \
            rdma-core-devel \
@@ -230,15 +223,12 @@ RUN zypper dist-upgrade -y && \
            scrub \
            sed \
            snappy-devel \
-           socat \
            sparse \
            spice-gtk-devel \
            spice-protocol-devel \
            systemd-devel \
-           systemd-rpm-macros \
            systemtap-sdt-devel \
            tar \
-           tcl-devel \
            tcpdump \
            tesseract-ocr \
            tesseract-ocr-traineddata-english \
@@ -255,7 +245,6 @@ RUN zypper dist-upgrade -y && \
            wireshark-devel \
            xen-devel \
            xfsprogs-devel \
-           xorriso \
            xz \
            xz-devel \
            xz-static-devel \
@@ -280,8 +269,8 @@ RUN cpanm --notest \
           TAP::Harness::Archive \
           accessors
 
-ENV CCACHE_WRAPPERSDIR "/usr/libexec/ccache-wrappers"
 ENV LANG "en_US.UTF-8"
 ENV MAKE "/usr/bin/make"
 ENV NINJA "/usr/bin/ninja"
 ENV PYTHON "/usr/bin/python3"
+ENV CCACHE_WRAPPERSDIR "/usr/libexec/ccache-wrappers"

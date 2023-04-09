@@ -87,9 +87,6 @@
 
 #define BUF_SIZE 256
 
-#define X_MAX   84
-#define Y_MAX   1
-
 struct BaumChardev {
     Chardev parent;
 
@@ -247,11 +244,11 @@ static int baum_deferred_init(BaumChardev *baum)
         brlapi_perror("baum: brlapi__getDisplaySize");
         return 0;
     }
-    if (baum->y > Y_MAX) {
-        baum->y = Y_MAX;
+    if (baum->y > 1) {
+        baum->y = 1;
     }
-    if (baum->x > X_MAX) {
-        baum->x = X_MAX;
+    if (baum->x > 84) {
+        baum->x = 84;
     }
 
     con = qemu_console_lookup_by_index(0);
@@ -299,8 +296,7 @@ static void baum_chr_accept_input(struct Chardev *chr)
 static void baum_write_packet(BaumChardev *baum, const uint8_t *buf, int len)
 {
     Chardev *chr = CHARDEV(baum);
-    g_autofree uint8_t *io_buf = g_malloc(1 + 2 * len);
-    uint8_t *cur = io_buf;
+    uint8_t io_buf[1 + 2 * len], *cur = io_buf;
     int room;
     *cur++ = ESC;
     while (len--)
@@ -384,9 +380,9 @@ static int baum_eat_packet(BaumChardev *baum, const uint8_t *buf, int len)
     switch (req) {
     case BAUM_REQ_DisplayData:
     {
-        uint8_t cells[X_MAX * Y_MAX], c;
-        uint8_t text[X_MAX * Y_MAX];
-        uint8_t zero[X_MAX * Y_MAX];
+        uint8_t cells[baum->x * baum->y], c;
+        uint8_t text[baum->x * baum->y];
+        uint8_t zero[baum->x * baum->y];
         int cursor = BRLAPI_CURSOR_OFF;
         int i;
 
@@ -409,7 +405,7 @@ static int baum_eat_packet(BaumChardev *baum, const uint8_t *buf, int len)
         }
         timer_del(baum->cellCount_timer);
 
-        memset(zero, 0, baum->x * baum->y);
+        memset(zero, 0, sizeof(zero));
 
         brlapi_writeArguments_t wa = {
             .displayNumber = BRLAPI_DISPLAY_DEFAULT,

@@ -270,23 +270,23 @@ ssize_t cpu_get_note_size(int class, int machine, int nr_cpus)
 static int ppc_write_all_elf_notes(const char *note_name,
                                    WriteCoreDumpFunction f,
                                    PowerPCCPU *cpu, int id,
-                                   DumpState *s)
+                                   void *opaque)
 {
-    NoteFuncArg arg = { .state = s };
+    NoteFuncArg arg = { .state = opaque };
     int ret = -1;
     int note_size;
     const NoteFuncDesc *nf;
 
     for (nf = note_func; nf->note_contents_func; nf++) {
-        arg.note.hdr.n_namesz = cpu_to_dump32(s, sizeof(arg.note.name));
-        arg.note.hdr.n_descsz = cpu_to_dump32(s, nf->contents_size);
+        arg.note.hdr.n_namesz = cpu_to_dump32(opaque, sizeof(arg.note.name));
+        arg.note.hdr.n_descsz = cpu_to_dump32(opaque, nf->contents_size);
         strncpy(arg.note.name, note_name, sizeof(arg.note.name));
 
         (*nf->note_contents_func)(&arg, cpu);
 
         note_size =
             sizeof(arg.note) - sizeof(arg.note.contents) + nf->contents_size;
-        ret = f(&arg.note, note_size, s);
+        ret = f(&arg.note, note_size, opaque);
         if (ret < 0) {
             return -1;
         }
@@ -295,15 +295,15 @@ static int ppc_write_all_elf_notes(const char *note_name,
 }
 
 int ppc64_cpu_write_elf64_note(WriteCoreDumpFunction f, CPUState *cs,
-                               int cpuid, DumpState *s)
+                               int cpuid, void *opaque)
 {
     PowerPCCPU *cpu = POWERPC_CPU(cs);
-    return ppc_write_all_elf_notes("CORE", f, cpu, cpuid, s);
+    return ppc_write_all_elf_notes("CORE", f, cpu, cpuid, opaque);
 }
 
 int ppc32_cpu_write_elf32_note(WriteCoreDumpFunction f, CPUState *cs,
-                               int cpuid, DumpState *s)
+                               int cpuid, void *opaque)
 {
     PowerPCCPU *cpu = POWERPC_CPU(cs);
-    return ppc_write_all_elf_notes("CORE", f, cpu, cpuid, s);
+    return ppc_write_all_elf_notes("CORE", f, cpu, cpuid, opaque);
 }

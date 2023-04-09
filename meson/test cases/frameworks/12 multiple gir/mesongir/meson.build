@@ -24,8 +24,7 @@ girtarget = gnome.generate_gir(
   identifier_prefix : 'Meson',
   includes : ['GObject-2.0'],
   export_packages : 'meson',
-  install : true,
-  install_gir: false,
+  install : true
 )
 meson_gir = girtarget[0]
 meson_typelib = girtarget[1]

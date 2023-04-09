@@ -148,13 +148,7 @@ hwaddr openrisc_cpu_get_phys_page_debug(CPUState *cs, vaddr addr)
     case SR_DME | SR_IME:
         /* The mmu is definitely enabled.  */
         excp = get_phys_mmu(cpu, &phys_addr, &prot, addr,
-                            PAGE_READ,
-                            (sr & SR_SM) != 0);
-        if (!excp) {
-            return phys_addr;
-        }
-        excp = get_phys_mmu(cpu, &phys_addr, &prot, addr,
-                            PAGE_EXEC,
+                            PAGE_EXEC | PAGE_READ | PAGE_WRITE,
                             (sr & SR_SM) != 0);
         return excp ? -1 : phys_addr;
 

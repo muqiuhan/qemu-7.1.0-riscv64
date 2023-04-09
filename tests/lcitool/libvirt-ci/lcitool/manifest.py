@@ -4,15 +4,12 @@
 #
 # SPDX-License-Identifier: GPL-2.0-or-later
 
-import logging
 import yaml
 from pathlib import Path
 
-from lcitool.formatters import DockerfileFormatter, ShellVariablesFormatter, ShellBuildEnvFormatter
+from lcitool.formatters import DockerfileFormatter, ShellVariablesFormatter
 from lcitool.inventory import Inventory
 from lcitool import gitlab, util, LcitoolError
-
-log = logging.getLogger(__name__)
 
 
 class ManifestError(LcitoolError):
@@ -126,7 +123,7 @@ class Manifest:
                     artifacts.setdefault("expire_in", "2 days")
 
                 arch = jobinfo["arch"]
-                if arch == "x86_64" or "cirrus" in facts:
+                if arch == "x86_64":
                     jobinfo.setdefault("cross-build", False)
                 else:
                     jobinfo.setdefault("cross-build", True)
@@ -142,10 +139,8 @@ class Manifest:
                         raise ValueError(f"target {target} duplicate arch {arch} missing suffix")
                 done[arch] = True
 
-                if "cirrus" in facts:
-                    ciarch = facts["cirrus"]["arch"]
-                    if arch != ciarch:
-                        raise ValueError(f"target {target} only supports {ciarch} architecture")
+                if arch != "x86_64" and "cirrus" in facts:
+                    raise ValueError(f"target {target} does not support non-x86-64 architecture")
 
         if not have_containers:
             gitlabinfo["containers"] = False
@@ -160,8 +155,6 @@ class Manifest:
             if self.values["containers"]["enabled"]:
                 generated = self._generate_containers(dryrun)
                 self._clean_containers(generated, dryrun)
-                generated = self._generate_buildenv(dryrun)
-                self._clean_buildenv(generated, dryrun)
 
             if self.values["cirrus"]["enabled"]:
                 generated = self._generate_cirrus(dryrun)
@@ -170,7 +163,6 @@ class Manifest:
             if self.values["gitlab"]["enabled"]:
                 self._generate_gitlab(dryrun)
         except Exception as ex:
-            log.debug("Failed to generate configuration")
             raise ManifestError(f"Failed to generate configuration: {ex}")
 
     def _generate_formatter(self, dryrun, subdir, suffix, formatter, targettype):
@@ -224,12 +216,6 @@ class Manifest:
                                         "cirrus", "vars",
                                         formatter, "cirrus")
 
-    def _generate_buildenv(self, dryrun):
-        formatter = ShellBuildEnvFormatter()
-        return self._generate_formatter(dryrun,
-                                        "buildenv", "sh",
-                                        formatter, "containers")
-
     def _clean_files(self, generated, dryrun, subdir, suffix):
         outdir = Path(self.basedir, self.cidir, subdir)
         if not outdir.exists():
@@ -247,9 +233,6 @@ class Manifest:
 
     def _clean_cirrus(self, generated, dryrun):
         self._clean_files(generated, dryrun, "cirrus", "vars")
-
-    def _clean_buildenv(self, generated, dryrun):
-        self._clean_files(generated, dryrun, "buildenv", "sh")
 
     def _replace_file(self, content, path, dryrun):
         path = Path(self.basedir, path)
@@ -295,7 +278,7 @@ class Manifest:
         includes = []
         if gitlabinfo["containers"]:
             path = Path(gitlabdir, "container-templates.yml")
-            content = [gitlab.container_template(self.cidir)]
+            content = [gitlab.container_template(namespace, project, self.cidir)]
             self._replace_file(content, path, dryrun)
             if len(content) > 0:
                 includes.append(path)
@@ -303,29 +286,24 @@ class Manifest:
         path = Path(gitlabdir, "build-templates.yml")
         content = []
         if have_native:
-            content.append(gitlab.native_build_template(project, self.cidir))
+            content.append(gitlab.native_build_template())
         if have_cross:
-            content.append(gitlab.cross_build_template(project, self.cidir))
+            content.append(gitlab.cross_build_template())
         if gitlabinfo["cirrus"]:
             content.append(gitlab.cirrus_template(self.cidir))
         self._replace_file(content, path, dryrun)
         if len(content) > 0:
             includes.append(path)
 
-        fmtcontent = []
-        if jobinfo["cargo-fmt"]:
-            fmtcontent.append(gitlab.cargo_fmt_job())
-        if jobinfo["go-fmt"]:
-            fmtcontent.append(gitlab.go_fmt_job())
-        if jobinfo["clang-format"]:
-            fmtcontent.append(gitlab.clang_format_job())
-
         testcontent = []
         if jobinfo["check-dco"]:
-            testcontent.append(gitlab.check_dco_job())
-        if len(fmtcontent):
-            testcontent.append(gitlab.code_fmt_template())
-            testcontent.extend(fmtcontent)
+            testcontent.append(gitlab.check_dco_job(namespace))
+        if jobinfo["cargo-fmt"]:
+            testcontent.append(gitlab.cargo_fmt_job())
+        if jobinfo["go-fmt"]:
+            testcontent.append(gitlab.go_fmt_job())
+        if jobinfo["clang-format"]:
+            testcontent.append(gitlab.clang_format_job())
 
         path = Path(gitlabdir, "sanity-checks.yml")
         self._replace_file(testcontent, path, dryrun)
@@ -352,11 +330,7 @@ class Manifest:
                 includes.append(path)
 
         path = Path(self.cidir, "gitlab.yml")
-        content = [gitlab.docs(namespace),
-                   gitlab.variables(namespace),
-                   gitlab.workflow(),
-                   gitlab.debug(),
-                   gitlab.includes(includes)]
+        content = [gitlab.docs(), gitlab.includes(includes)]
         self._replace_file(content, path, dryrun)
 
     def _generate_gitlab_container_jobs(self, cross):
@@ -441,7 +415,6 @@ class Manifest:
         def jobfunc(target, facts, jobinfo):
             return gitlab.native_build_job(
                 target,
-                facts["containers"]["base"],
                 jobinfo["suffix"],
                 jobinfo["variables"],
                 jobinfo["template"],
@@ -458,7 +431,6 @@ class Manifest:
         def jobfunc(target, facts, jobinfo):
             return gitlab.cross_build_job(
                 target,
-                facts["containers"]["base"],
                 jobinfo["arch"],
                 jobinfo["suffix"],
                 jobinfo["variables"],
@@ -479,7 +451,6 @@ class Manifest:
                 facts["cirrus"]["instance_type"],
                 facts["cirrus"]["image_selector"],
                 facts["cirrus"]["image_name"],
-                facts["cirrus"]["arch"],
                 facts["packaging"]["command"],
                 jobinfo["suffix"],
                 jobinfo["variables"],

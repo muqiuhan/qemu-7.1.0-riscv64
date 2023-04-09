@@ -179,12 +179,10 @@ static void test_io_channel(bool async,
         test_io_channel_setup_async(listen_addr, connect_addr,
                                     &srv, &src, &dst);
 
-#ifndef _WIN32
         g_assert(!passFD ||
                  qio_channel_has_feature(src, QIO_CHANNEL_FEATURE_FD_PASS));
         g_assert(!passFD ||
                  qio_channel_has_feature(dst, QIO_CHANNEL_FEATURE_FD_PASS));
-#endif
         g_assert(qio_channel_has_feature(src, QIO_CHANNEL_FEATURE_SHUTDOWN));
         g_assert(qio_channel_has_feature(dst, QIO_CHANNEL_FEATURE_SHUTDOWN));
 
@@ -208,12 +206,10 @@ static void test_io_channel(bool async,
         test_io_channel_setup_async(listen_addr, connect_addr,
                                     &srv, &src, &dst);
 
-#ifndef _WIN32
         g_assert(!passFD ||
                  qio_channel_has_feature(src, QIO_CHANNEL_FEATURE_FD_PASS));
         g_assert(!passFD ||
                  qio_channel_has_feature(dst, QIO_CHANNEL_FEATURE_FD_PASS));
-#endif
         g_assert(qio_channel_has_feature(src, QIO_CHANNEL_FEATURE_SHUTDOWN));
         g_assert(qio_channel_has_feature(dst, QIO_CHANNEL_FEATURE_SHUTDOWN));
 
@@ -240,12 +236,10 @@ static void test_io_channel(bool async,
         test_io_channel_setup_sync(listen_addr, connect_addr,
                                    &srv, &src, &dst);
 
-#ifndef _WIN32
         g_assert(!passFD ||
                  qio_channel_has_feature(src, QIO_CHANNEL_FEATURE_FD_PASS));
         g_assert(!passFD ||
                  qio_channel_has_feature(dst, QIO_CHANNEL_FEATURE_FD_PASS));
-#endif
         g_assert(qio_channel_has_feature(src, QIO_CHANNEL_FEATURE_SHUTDOWN));
         g_assert(qio_channel_has_feature(dst, QIO_CHANNEL_FEATURE_SHUTDOWN));
 
@@ -269,12 +263,10 @@ static void test_io_channel(bool async,
         test_io_channel_setup_sync(listen_addr, connect_addr,
                                    &srv, &src, &dst);
 
-#ifndef _WIN32
         g_assert(!passFD ||
                  qio_channel_has_feature(src, QIO_CHANNEL_FEATURE_FD_PASS));
         g_assert(!passFD ||
                  qio_channel_has_feature(dst, QIO_CHANNEL_FEATURE_FD_PASS));
-#endif
         g_assert(qio_channel_has_feature(src, QIO_CHANNEL_FEATURE_SHUTDOWN));
         g_assert(qio_channel_has_feature(dst, QIO_CHANNEL_FEATURE_SHUTDOWN));
 
@@ -375,6 +367,7 @@ static void test_io_channel_ipv6_async(void)
 }
 
 
+#ifndef _WIN32
 static void test_io_channel_unix(bool async)
 {
     SocketAddress *listen_addr = g_new0(SocketAddress, 1);
@@ -405,7 +398,6 @@ static void test_io_channel_unix_async(void)
     return test_io_channel_unix(true);
 }
 
-#ifndef _WIN32
 static void test_io_channel_unix_fd_pass(void)
 {
     SocketAddress *listen_addr = g_new0(SocketAddress, 1);
@@ -499,7 +491,6 @@ static void test_io_channel_unix_fd_pass(void)
     }
     g_free(fdrecv);
 }
-#endif /* _WIN32 */
 
 static void test_io_channel_unix_listen_cleanup(void)
 {
@@ -531,6 +522,9 @@ static void test_io_channel_unix_listen_cleanup(void)
     unlink(TEST_SOCKET);
 }
 
+#endif /* _WIN32 */
+
+
 static void test_io_channel_ipv4_fd(void)
 {
     QIOChannel *ioc;
@@ -561,7 +555,7 @@ static void test_io_channel_ipv4_fd(void)
 
 int main(int argc, char **argv)
 {
-    bool has_ipv4, has_ipv6, has_afunix;
+    bool has_ipv4, has_ipv6;
 
     module_call_init(MODULE_INIT_QOM);
     qemu_init_main_loop(&error_abort);
@@ -594,19 +588,16 @@ int main(int argc, char **argv)
                         test_io_channel_ipv6_async);
     }
 
-    socket_check_afunix_support(&has_afunix);
-    if (has_afunix) {
-        g_test_add_func("/io/channel/socket/unix-sync",
-                        test_io_channel_unix_sync);
-        g_test_add_func("/io/channel/socket/unix-async",
-                        test_io_channel_unix_async);
 #ifndef _WIN32
-        g_test_add_func("/io/channel/socket/unix-fd-pass",
-                        test_io_channel_unix_fd_pass);
-#endif
-        g_test_add_func("/io/channel/socket/unix-listen-cleanup",
-                        test_io_channel_unix_listen_cleanup);
-    }
+    g_test_add_func("/io/channel/socket/unix-sync",
+                    test_io_channel_unix_sync);
+    g_test_add_func("/io/channel/socket/unix-async",
+                    test_io_channel_unix_async);
+    g_test_add_func("/io/channel/socket/unix-fd-pass",
+                    test_io_channel_unix_fd_pass);
+    g_test_add_func("/io/channel/socket/unix-listen-cleanup",
+                    test_io_channel_unix_listen_cleanup);
+#endif /* _WIN32 */
 
 end:
     return g_test_run();

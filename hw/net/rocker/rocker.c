@@ -1212,14 +1212,24 @@ static void rocker_msix_vectors_unuse(Rocker *r,
     }
 }
 
-static void rocker_msix_vectors_use(Rocker *r, unsigned int num_vectors)
+static int rocker_msix_vectors_use(Rocker *r,
+                                   unsigned int num_vectors)
 {
     PCIDevice *dev = PCI_DEVICE(r);
+    int err;
     int i;
 
     for (i = 0; i < num_vectors; i++) {
-        msix_vector_use(dev, i);
+        err = msix_vector_use(dev, i);
+        if (err) {
+            goto rollback;
+        }
     }
+    return 0;
+
+rollback:
+    rocker_msix_vectors_unuse(r, i);
+    return err;
 }
 
 static int rocker_msix_init(Rocker *r, Error **errp)
@@ -1237,9 +1247,16 @@ static int rocker_msix_init(Rocker *r, Error **errp)
         return err;
     }
 
-    rocker_msix_vectors_use(r, ROCKER_MSIX_VEC_COUNT(r->fp_ports));
+    err = rocker_msix_vectors_use(r, ROCKER_MSIX_VEC_COUNT(r->fp_ports));
+    if (err) {
+        goto err_msix_vectors_use;
+    }
 
     return 0;
+
+err_msix_vectors_use:
+    msix_uninit(dev, &r->msix_bar, &r->msix_bar);
+    return err;
 }
 
 static void rocker_msix_uninit(Rocker *r)

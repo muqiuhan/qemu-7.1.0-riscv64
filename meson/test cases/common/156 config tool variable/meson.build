@@ -23,9 +23,9 @@ endif
 includedir = dep_llvm.get_configtool_variable('includedir')
 includedir = join_paths(includedir, 'llvm')
 if host_machine.system() == 'windows'
-  cmd = run_command(['dir', includedir], check: false)
+  cmd = run_command(['dir', includedir])
 else
-  cmd = run_command(['ls', includedir], check: false)
+  cmd = run_command(['ls', includedir])
 endif
 
 assert(cmd.returncode() == 0, 'did not run successfully')

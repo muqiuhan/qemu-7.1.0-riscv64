@@ -35,9 +35,6 @@ QemuOptsList qemu_semihosting_config_opts = {
             .name = "enable",
             .type = QEMU_OPT_BOOL,
         }, {
-            .name = "userspace",
-            .type = QEMU_OPT_BOOL,
-        }, {
             .name = "target",
             .type = QEMU_OPT_STRING,
         }, {
@@ -53,7 +50,6 @@ QemuOptsList qemu_semihosting_config_opts = {
 
 typedef struct SemihostingConfig {
     bool enabled;
-    bool userspace_enabled;
     SemihostingTarget target;
     char **argv;
     int argc;
@@ -63,9 +59,9 @@ typedef struct SemihostingConfig {
 static SemihostingConfig semihosting;
 static const char *semihost_chardev;
 
-bool semihosting_enabled(bool is_user)
+bool semihosting_enabled(void)
 {
-    return semihosting.enabled && (!is_user || semihosting.userspace_enabled);
+    return semihosting.enabled;
 }
 
 SemihostingTarget semihosting_get_target(void)
@@ -141,8 +137,6 @@ int qemu_semihosting_config_options(const char *optarg)
     if (opts != NULL) {
         semihosting.enabled = qemu_opt_get_bool(opts, "enable",
                                                 true);
-        semihosting.userspace_enabled = qemu_opt_get_bool(opts, "userspace",
-                                                          false);
         const char *target = qemu_opt_get(opts, "target");
         /* setup of chardev is deferred until they are initialised */
         semihost_chardev = qemu_opt_get(opts, "chardev");

@@ -44,8 +44,3 @@ bool kvm_hyperv_expand_features(X86CPU *cpu, Error **errp)
 {
     abort();
 }
-
-void kvm_set_max_apic_id(uint32_t max_apic_id)
-{
-    return;
-}

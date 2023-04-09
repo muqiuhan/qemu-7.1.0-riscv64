@@ -45,17 +45,6 @@
 #include "libvhost-user.h"
 
 /* usually provided by GLib */
-#if     __GNUC__ > 2 || (__GNUC__ == 2 && __GNUC_MINOR__ > 4)
-#if !defined(__clang__) && (__GNUC__ == 4 && __GNUC_MINOR__ == 4)
-#define G_GNUC_PRINTF(format_idx, arg_idx) \
-  __attribute__((__format__(gnu_printf, format_idx, arg_idx)))
-#else
-#define G_GNUC_PRINTF(format_idx, arg_idx) \
-  __attribute__((__format__(__printf__, format_idx, arg_idx)))
-#endif
-#else   /* !__GNUC__ */
-#define G_GNUC_PRINTF(format_idx, arg_idx)
-#endif  /* !__GNUC__ */
 #ifndef MIN
 #define MIN(x, y) ({                            \
             typeof(x) _min1 = (x);              \
@@ -162,7 +151,7 @@ vu_request_to_string(unsigned int req)
     }
 }
 
-static void G_GNUC_PRINTF(2, 3)
+static void
 vu_panic(VuDev *dev, const char *msg, ...)
 {
     char *buf = NULL;
@@ -662,8 +651,7 @@ generate_faults(VuDev *dev) {
 
         if (ioctl(dev->postcopy_ufd, UFFDIO_REGISTER, &reg_struct)) {
             vu_panic(dev, "%s: Failed to userfault region %d "
-                          "@%" PRIx64 " + size:%" PRIx64 " offset: %" PRIx64
-                          ": (ufd=%d)%s\n",
+                          "@%p + size:%zx offset: %zx: (ufd=%d)%s\n",
                      __func__, i,
                      dev_region->mmap_addr,
                      dev_region->size, dev_region->mmap_offset,
@@ -712,7 +700,7 @@ vu_add_mem_reg(VuDev *dev, VhostUserMsg *vmsg) {
     if (vmsg->size < VHOST_USER_MEM_REG_SIZE) {
         close(vmsg->fds[0]);
         vu_panic(dev, "VHOST_USER_ADD_MEM_REG requires a message size of at "
-                      "least %zu bytes and only %d bytes were received",
+                      "least %d bytes and only %d bytes were received",
                       VHOST_USER_MEM_REG_SIZE, vmsg->size);
         return false;
     }
@@ -838,7 +826,7 @@ vu_rem_mem_reg(VuDev *dev, VhostUserMsg *vmsg) {
     if (vmsg->size < VHOST_USER_MEM_REG_SIZE) {
         vmsg_close_fds(vmsg);
         vu_panic(dev, "VHOST_USER_REM_MEM_REG requires a message size of at "
-                      "least %zu bytes and only %d bytes were received",
+                      "least %d bytes and only %d bytes were received",
                       VHOST_USER_MEM_REG_SIZE, vmsg->size);
         return false;
     }

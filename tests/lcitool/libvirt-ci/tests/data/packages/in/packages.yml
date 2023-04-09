@@ -41,9 +41,7 @@ packages:
 - dnsmasq
 - dtrace
 - dwarves
-- e2fsprogs
 - ebtables
-- expect
 - findutils
 - firewalld-filesystem
 - flake8
@@ -59,7 +57,6 @@ packages:
 - genisoimage
 - gettext
 - git
-- glib-mkenums
 - glib2
 - glib2-native
 - glib2-static
@@ -113,7 +110,6 @@ packages:
 - libffi
 - libgcrypt
 - libgovirt
-- libguestfs
 - libguestfs-tools
 - libibumad
 - libibverbs
@@ -122,7 +118,6 @@ packages:
 - libjpeg
 - liblzma
 - liblzma-static
-- libnbd
 - libnfs
 - libnl3
 - libnlroute3
@@ -145,7 +140,6 @@ packages:
 - libtirpc
 - libtool
 - libtoolize
-- libtorrent
 - libubsan
 - libudev
 - liburing
@@ -159,16 +153,13 @@ packages:
 - libzstd
 - llvm
 - locales
-- losetup
 - lsof
 - lttng-ust
-- lua
 - lvm2
 - lzo
 - make
 - mesa-libgbm
 - meson
-- mkisofs
 - modprobe
 - mono
 - monodevelop
@@ -176,7 +167,6 @@ packages:
 - nbd-client
 - nbd-server
 - nbdkit
-- nbdsh
 - ncursesw
 - net-snmp
 - net-tools
@@ -201,7 +191,6 @@ packages:
 - perl-Digest
 - perl-Digest-MD5
 - perl-ExtUtils-CBuilder
-- perl-ExtUtils-Embed
 - perl-File-Slurp
 - perl-IO-Compress-Bzip2
 - perl-IO-Interface
@@ -241,7 +230,6 @@ packages:
 - pulseaudio
 - python3
 - python3-PyYAML
-- python3-boto3
 - python3-dbus
 - python3-devel
 - python3-docutils
@@ -262,7 +250,6 @@ packages:
 - python3-wheel
 - qemu
 - qemu-img
-- qemu-io
 - qemu-nbd
 - rake
 - readline
@@ -277,24 +264,19 @@ packages:
 - sdl2
 - sdl2-image
 - sed
-- sfdisk
+- sheepdog
 - showmount
 - snappy
-- sndio
-- socat
 - sparse
 - spice-gtk3
 - spice-protocol
 - spice-server
-- ss
 - ssh-client
 - strace
 - sudo
 - systemd
-- systemd-rpm-macros
 - tar
 - tc
-- tcl
 - tcpdump
 - tesseract
 - tesseract-eng
@@ -319,4 +301,3 @@ packages:
 - zip
 - zlib
 - zlib-static
-- zstd

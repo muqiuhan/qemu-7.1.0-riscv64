@@ -367,6 +367,7 @@ def check_machine_type(s, d):
     if s["Name"] != d["Name"]:
         print("Warning: checking incompatible machine types:", end=' ')
         print("\"" + s["Name"] + "\", \"" + d["Name"] + "\"")
+    return
 
 
 def main():

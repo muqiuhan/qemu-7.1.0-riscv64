@@ -27,14 +27,15 @@
 static void
 test_tls_psk_init_common(const char *pskfile, const char *user, const char *key)
 {
-    g_autoptr(GError) gerr = NULL;
-    g_autofree char *line = g_strdup_printf("%s:%s\n", user, key);
+    FILE *fp;
 
-    g_file_set_contents(pskfile, line, strlen(line), &gerr);
-    if (gerr != NULL) {
-        g_critical("Failed to create pskfile %s: %s", pskfile, gerr->message);
+    fp = fopen(pskfile, "w");
+    if (fp == NULL) {
+        g_critical("Failed to create pskfile %s: %s", pskfile, strerror(errno));
         abort();
     }
+    fprintf(fp, "%s:%s\n", user, key);
+    fclose(fp);
 }
 
 void test_tls_psk_init(const char *pskfile)

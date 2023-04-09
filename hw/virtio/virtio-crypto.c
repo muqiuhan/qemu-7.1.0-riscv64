@@ -27,39 +27,6 @@
 
 #define VIRTIO_CRYPTO_VM_VERSION 1
 
-typedef struct VirtIOCryptoSessionReq {
-    VirtIODevice *vdev;
-    VirtQueue *vq;
-    VirtQueueElement *elem;
-    CryptoDevBackendSessionInfo info;
-    CryptoDevCompletionFunc cb;
-} VirtIOCryptoSessionReq;
-
-static void virtio_crypto_free_create_session_req(VirtIOCryptoSessionReq *sreq)
-{
-    switch (sreq->info.op_code) {
-    case VIRTIO_CRYPTO_CIPHER_CREATE_SESSION:
-        g_free(sreq->info.u.sym_sess_info.cipher_key);
-        g_free(sreq->info.u.sym_sess_info.auth_key);
-        break;
-
-    case VIRTIO_CRYPTO_AKCIPHER_CREATE_SESSION:
-        g_free(sreq->info.u.asym_sess_info.key);
-        break;
-
-    case VIRTIO_CRYPTO_CIPHER_DESTROY_SESSION:
-    case VIRTIO_CRYPTO_HASH_DESTROY_SESSION:
-    case VIRTIO_CRYPTO_MAC_DESTROY_SESSION:
-    case VIRTIO_CRYPTO_AEAD_DESTROY_SESSION:
-    case VIRTIO_CRYPTO_AKCIPHER_DESTROY_SESSION:
-        break;
-
-    default:
-        error_report("Unknown opcode: %u", sreq->info.op_code);
-    }
-    g_free(sreq);
-}
-
 /*
  * Transfer virtqueue index to crypto queue index.
  * The control virtqueue is after the data virtqueues
@@ -108,24 +75,27 @@ virtio_crypto_cipher_session_helper(VirtIODevice *vdev,
     return 0;
 }
 
-static int
+static int64_t
 virtio_crypto_create_sym_session(VirtIOCrypto *vcrypto,
                struct virtio_crypto_sym_create_session_req *sess_req,
                uint32_t queue_id,
                uint32_t opcode,
-               struct iovec *iov, unsigned int out_num,
-               VirtIOCryptoSessionReq *sreq)
+               struct iovec *iov, unsigned int out_num)
 {
     VirtIODevice *vdev = VIRTIO_DEVICE(vcrypto);
-    CryptoDevBackendSymSessionInfo *sym_info = &sreq->info.u.sym_sess_info;
+    CryptoDevBackendSessionInfo info;
+    CryptoDevBackendSymSessionInfo *sym_info;
+    int64_t session_id;
     int queue_index;
     uint32_t op_type;
+    Error *local_err = NULL;
     int ret;
 
+    memset(&info, 0, sizeof(info));
     op_type = ldl_le_p(&sess_req->op_type);
-    sreq->info.op_code = opcode;
+    info.op_code = opcode;
 
-    sym_info = &sreq->info.u.sym_sess_info;
+    sym_info = &info.u.sym_sess_info;
     sym_info->op_type = op_type;
 
     if (op_type == VIRTIO_CRYPTO_SYM_OP_CIPHER) {
@@ -133,7 +103,7 @@ virtio_crypto_create_sym_session(VirtIOCrypto *vcrypto,
                            &sess_req->u.cipher.para,
                            &iov, &out_num);
         if (ret < 0) {
-            return ret;
+            goto err;
         }
     } else if (op_type == VIRTIO_CRYPTO_SYM_OP_ALGORITHM_CHAINING) {
         size_t s;
@@ -142,7 +112,7 @@ virtio_crypto_create_sym_session(VirtIOCrypto *vcrypto,
                            &sess_req->u.chain.para.cipher_param,
                            &iov, &out_num);
         if (ret < 0) {
-            return ret;
+            goto err;
         }
         /* hash part */
         sym_info->alg_chain_order = ldl_le_p(
@@ -159,7 +129,8 @@ virtio_crypto_create_sym_session(VirtIOCrypto *vcrypto,
             if (sym_info->auth_key_len > vcrypto->conf.max_auth_key_len) {
                 error_report("virtio-crypto length of auth key is too big: %u",
                              sym_info->auth_key_len);
-                return -VIRTIO_CRYPTO_ERR;
+                ret = -VIRTIO_CRYPTO_ERR;
+                goto err;
             }
             /* get auth key */
             if (sym_info->auth_key_len > 0) {
@@ -169,7 +140,8 @@ virtio_crypto_create_sym_session(VirtIOCrypto *vcrypto,
                 if (unlikely(s != sym_info->auth_key_len)) {
                     virtio_error(vdev,
                           "virtio-crypto authenticated key incorrect");
-                    return -EFAULT;
+                    ret = -EFAULT;
+                    goto err;
                 }
                 iov_discard_front(&iov, &out_num, sym_info->auth_key_len);
             }
@@ -181,30 +153,49 @@ virtio_crypto_create_sym_session(VirtIOCrypto *vcrypto,
         } else {
             /* VIRTIO_CRYPTO_SYM_HASH_MODE_NESTED */
             error_report("unsupported hash mode");
-            return -VIRTIO_CRYPTO_NOTSUPP;
+            ret = -VIRTIO_CRYPTO_NOTSUPP;
+            goto err;
         }
     } else {
         /* VIRTIO_CRYPTO_SYM_OP_NONE */
         error_report("unsupported cipher op_type: VIRTIO_CRYPTO_SYM_OP_NONE");
-        return -VIRTIO_CRYPTO_NOTSUPP;
+        ret = -VIRTIO_CRYPTO_NOTSUPP;
+        goto err;
     }
 
     queue_index = virtio_crypto_vq2q(queue_id);
-    return cryptodev_backend_create_session(vcrypto->cryptodev, &sreq->info,
-                                            queue_index, sreq->cb, sreq);
+    session_id = cryptodev_backend_create_session(
+                                     vcrypto->cryptodev,
+                                     &info, queue_index, &local_err);
+    if (session_id >= 0) {
+        ret = session_id;
+    } else {
+        if (local_err) {
+            error_report_err(local_err);
+        }
+        ret = -VIRTIO_CRYPTO_ERR;
+    }
+
+err:
+    g_free(sym_info->cipher_key);
+    g_free(sym_info->auth_key);
+    return ret;
 }
 
-static int
+static int64_t
 virtio_crypto_create_asym_session(VirtIOCrypto *vcrypto,
                struct virtio_crypto_akcipher_create_session_req *sess_req,
                uint32_t queue_id, uint32_t opcode,
-               struct iovec *iov, unsigned int out_num,
-               VirtIOCryptoSessionReq *sreq)
+               struct iovec *iov, unsigned int out_num)
 {
     VirtIODevice *vdev = VIRTIO_DEVICE(vcrypto);
-    CryptoDevBackendAsymSessionInfo *asym_info = &sreq->info.u.asym_sess_info;
+    CryptoDevBackendSessionInfo info = {0};
+    CryptoDevBackendAsymSessionInfo *asym_info;
+    int64_t session_id;
     int queue_index;
     uint32_t algo, keytype, keylen;
+    g_autofree uint8_t *key = NULL;
+    Error *local_err = NULL;
 
     algo = ldl_le_p(&sess_req->para.algo);
     keytype = ldl_le_p(&sess_req->para.keytype);
@@ -217,19 +208,20 @@ virtio_crypto_create_asym_session(VirtIOCrypto *vcrypto,
     }
 
     if (keylen) {
-        asym_info->key = g_malloc(keylen);
-        if (iov_to_buf(iov, out_num, 0, asym_info->key, keylen) != keylen) {
+        key = g_malloc(keylen);
+        if (iov_to_buf(iov, out_num, 0, key, keylen) != keylen) {
             virtio_error(vdev, "virtio-crypto asym key incorrect");
             return -EFAULT;
         }
         iov_discard_front(&iov, &out_num, keylen);
     }
 
-    sreq->info.op_code = opcode;
-    asym_info = &sreq->info.u.asym_sess_info;
+    info.op_code = opcode;
+    asym_info = &info.u.asym_sess_info;
     asym_info->algo = algo;
     asym_info->keytype = keytype;
     asym_info->keylen = keylen;
+    asym_info->key = key;
     switch (asym_info->algo) {
     case VIRTIO_CRYPTO_AKCIPHER_RSA:
         asym_info->u.rsa.padding_algo =
@@ -245,95 +237,45 @@ virtio_crypto_create_asym_session(VirtIOCrypto *vcrypto,
     }
 
     queue_index = virtio_crypto_vq2q(queue_id);
-    return cryptodev_backend_create_session(vcrypto->cryptodev, &sreq->info,
-                                            queue_index, sreq->cb, sreq);
+    session_id = cryptodev_backend_create_session(vcrypto->cryptodev, &info,
+                     queue_index, &local_err);
+    if (session_id < 0) {
+        if (local_err) {
+            error_report_err(local_err);
+        }
+        return -VIRTIO_CRYPTO_ERR;
+    }
+
+    return session_id;
 }
 
-static int
+static uint8_t
 virtio_crypto_handle_close_session(VirtIOCrypto *vcrypto,
          struct virtio_crypto_destroy_session_req *close_sess_req,
-         uint32_t queue_id,
-         VirtIOCryptoSessionReq *sreq)
+         uint32_t queue_id)
 {
+    int ret;
     uint64_t session_id;
+    uint32_t status;
+    Error *local_err = NULL;
 
     session_id = ldq_le_p(&close_sess_req->session_id);
     DPRINTF("close session, id=%" PRIu64 "\n", session_id);
 
-    return cryptodev_backend_close_session(
-                vcrypto->cryptodev, session_id, queue_id, sreq->cb, sreq);
-}
-
-static void virtio_crypto_create_session_completion(void *opaque, int ret)
-{
-    VirtIOCryptoSessionReq *sreq = (VirtIOCryptoSessionReq *)opaque;
-    VirtQueue *vq = sreq->vq;
-    VirtQueueElement *elem = sreq->elem;
-    VirtIODevice *vdev = sreq->vdev;
-    struct virtio_crypto_session_input input;
-    struct iovec *in_iov = elem->in_sg;
-    unsigned in_num = elem->in_num;
-    size_t s;
-
-    memset(&input, 0, sizeof(input));
-    /* Serious errors, need to reset virtio crypto device */
-    if (ret == -EFAULT) {
-        virtqueue_detach_element(vq, elem, 0);
-        goto out;
-    } else if (ret == -VIRTIO_CRYPTO_NOTSUPP) {
-        stl_le_p(&input.status, VIRTIO_CRYPTO_NOTSUPP);
-    } else if (ret == -VIRTIO_CRYPTO_KEY_REJECTED) {
-        stl_le_p(&input.status, VIRTIO_CRYPTO_KEY_REJECTED);
-    } else if (ret != VIRTIO_CRYPTO_OK) {
-        stl_le_p(&input.status, VIRTIO_CRYPTO_ERR);
-    } else {
-        /* Set the session id */
-        stq_le_p(&input.session_id, sreq->info.session_id);
-        stl_le_p(&input.status, VIRTIO_CRYPTO_OK);
-    }
-
-    s = iov_from_buf(in_iov, in_num, 0, &input, sizeof(input));
-    if (unlikely(s != sizeof(input))) {
-        virtio_error(vdev, "virtio-crypto input incorrect");
-        virtqueue_detach_element(vq, elem, 0);
-        goto out;
-    }
-    virtqueue_push(vq, elem, sizeof(input));
-    virtio_notify(vdev, vq);
-
-out:
-    g_free(elem);
-    virtio_crypto_free_create_session_req(sreq);
-}
-
-static void virtio_crypto_destroy_session_completion(void *opaque, int ret)
-{
-    VirtIOCryptoSessionReq *sreq = (VirtIOCryptoSessionReq *)opaque;
-    VirtQueue *vq = sreq->vq;
-    VirtQueueElement *elem = sreq->elem;
-    VirtIODevice *vdev = sreq->vdev;
-    struct iovec *in_iov = elem->in_sg;
-    unsigned in_num = elem->in_num;
-    uint8_t status;
-    size_t s;
-
-    if (ret < 0) {
-        status = VIRTIO_CRYPTO_ERR;
-    } else {
+    ret = cryptodev_backend_close_session(
+              vcrypto->cryptodev, session_id, queue_id, &local_err);
+    if (ret == 0) {
         status = VIRTIO_CRYPTO_OK;
+    } else {
+        if (local_err) {
+            error_report_err(local_err);
+        } else {
+            error_report("destroy session failed");
+        }
+        status = VIRTIO_CRYPTO_ERR;
     }
-    s = iov_from_buf(in_iov, in_num, 0, &status, sizeof(status));
-    if (unlikely(s != sizeof(status))) {
-        virtio_error(vdev, "virtio-crypto status incorrect");
-        virtqueue_detach_element(vq, elem, 0);
-        goto out;
-    }
-    virtqueue_push(vq, elem, sizeof(status));
-    virtio_notify(vdev, vq);
 
-out:
-    g_free(elem);
-    g_free(sreq);
+    return status;
 }
 
 static void virtio_crypto_handle_ctrl(VirtIODevice *vdev, VirtQueue *vq)
@@ -341,16 +283,16 @@ static void virtio_crypto_handle_ctrl(VirtIODevice *vdev, VirtQueue *vq)
     VirtIOCrypto *vcrypto = VIRTIO_CRYPTO(vdev);
     struct virtio_crypto_op_ctrl_req ctrl;
     VirtQueueElement *elem;
-    VirtIOCryptoSessionReq *sreq;
-    unsigned out_num;
+    struct iovec *in_iov;
+    struct iovec *out_iov;
     unsigned in_num;
+    unsigned out_num;
     uint32_t queue_id;
     uint32_t opcode;
     struct virtio_crypto_session_input input;
+    int64_t session_id;
+    uint8_t status;
     size_t s;
-    int ret;
-    struct iovec *out_iov;
-    struct iovec *in_iov;
 
     for (;;) {
         g_autofree struct iovec *out_iov_copy = NULL;
@@ -385,34 +327,44 @@ static void virtio_crypto_handle_ctrl(VirtIODevice *vdev, VirtQueue *vq)
         opcode = ldl_le_p(&ctrl.header.opcode);
         queue_id = ldl_le_p(&ctrl.header.queue_id);
 
-        sreq = g_new0(VirtIOCryptoSessionReq, 1);
-        sreq->vdev = vdev;
-        sreq->vq = vq;
-        sreq->elem = elem;
-
+        memset(&input, 0, sizeof(input));
         switch (opcode) {
         case VIRTIO_CRYPTO_CIPHER_CREATE_SESSION:
-            sreq->cb = virtio_crypto_create_session_completion;
-            ret = virtio_crypto_create_sym_session(vcrypto,
-                            &ctrl.u.sym_create_session,
-                            queue_id, opcode,
-                            out_iov, out_num,
-                            sreq);
-            if (ret < 0) {
-                virtio_crypto_create_session_completion(sreq, ret);
-            }
-            break;
+            session_id = virtio_crypto_create_sym_session(vcrypto,
+                             &ctrl.u.sym_create_session,
+                             queue_id, opcode,
+                             out_iov, out_num);
+            goto check_session;
 
         case VIRTIO_CRYPTO_AKCIPHER_CREATE_SESSION:
-            sreq->cb = virtio_crypto_create_session_completion;
-            ret = virtio_crypto_create_asym_session(vcrypto,
+            session_id = virtio_crypto_create_asym_session(vcrypto,
                              &ctrl.u.akcipher_create_session,
                              queue_id, opcode,
-                             out_iov, out_num,
-                             sreq);
-            if (ret < 0) {
-                virtio_crypto_create_session_completion(sreq, ret);
+                             out_iov, out_num);
+
+check_session:
+            /* Serious errors, need to reset virtio crypto device */
+            if (session_id == -EFAULT) {
+                virtqueue_detach_element(vq, elem, 0);
+                break;
+            } else if (session_id == -VIRTIO_CRYPTO_NOTSUPP) {
+                stl_le_p(&input.status, VIRTIO_CRYPTO_NOTSUPP);
+            } else if (session_id == -VIRTIO_CRYPTO_ERR) {
+                stl_le_p(&input.status, VIRTIO_CRYPTO_ERR);
+            } else {
+                /* Set the session id */
+                stq_le_p(&input.session_id, session_id);
+                stl_le_p(&input.status, VIRTIO_CRYPTO_OK);
             }
+
+            s = iov_from_buf(in_iov, in_num, 0, &input, sizeof(input));
+            if (unlikely(s != sizeof(input))) {
+                virtio_error(vdev, "virtio-crypto input incorrect");
+                virtqueue_detach_element(vq, elem, 0);
+                break;
+            }
+            virtqueue_push(vq, elem, sizeof(input));
+            virtio_notify(vdev, vq);
             break;
 
         case VIRTIO_CRYPTO_CIPHER_DESTROY_SESSION:
@@ -420,36 +372,37 @@ static void virtio_crypto_handle_ctrl(VirtIODevice *vdev, VirtQueue *vq)
         case VIRTIO_CRYPTO_MAC_DESTROY_SESSION:
         case VIRTIO_CRYPTO_AEAD_DESTROY_SESSION:
         case VIRTIO_CRYPTO_AKCIPHER_DESTROY_SESSION:
-            sreq->cb = virtio_crypto_destroy_session_completion;
-            ret = virtio_crypto_handle_close_session(vcrypto,
-                   &ctrl.u.destroy_session, queue_id,
-                   sreq);
-            if (ret < 0) {
-                virtio_crypto_destroy_session_completion(sreq, ret);
+            status = virtio_crypto_handle_close_session(vcrypto,
+                   &ctrl.u.destroy_session, queue_id);
+            /* The status only occupy one byte, we can directly use it */
+            s = iov_from_buf(in_iov, in_num, 0, &status, sizeof(status));
+            if (unlikely(s != sizeof(status))) {
+                virtio_error(vdev, "virtio-crypto status incorrect");
+                virtqueue_detach_element(vq, elem, 0);
+                break;
             }
+            virtqueue_push(vq, elem, sizeof(status));
+            virtio_notify(vdev, vq);
             break;
-
         case VIRTIO_CRYPTO_HASH_CREATE_SESSION:
         case VIRTIO_CRYPTO_MAC_CREATE_SESSION:
         case VIRTIO_CRYPTO_AEAD_CREATE_SESSION:
         default:
-            memset(&input, 0, sizeof(input));
             error_report("virtio-crypto unsupported ctrl opcode: %d", opcode);
             stl_le_p(&input.status, VIRTIO_CRYPTO_NOTSUPP);
             s = iov_from_buf(in_iov, in_num, 0, &input, sizeof(input));
             if (unlikely(s != sizeof(input))) {
                 virtio_error(vdev, "virtio-crypto input incorrect");
                 virtqueue_detach_element(vq, elem, 0);
-            } else {
-                virtqueue_push(vq, elem, sizeof(input));
-                virtio_notify(vdev, vq);
+                break;
             }
-            g_free(sreq);
-            g_free(elem);
+            virtqueue_push(vq, elem, sizeof(input));
+            virtio_notify(vdev, vq);
 
             break;
         } /* end switch case */
 
+        g_free(elem);
     } /* end for loop */
 }
 
@@ -495,7 +448,6 @@ static void virtio_crypto_free_request(VirtIOCryptoReq *req)
         }
     }
 
-    g_free(req->in_iov);
     g_free(req);
 }
 
@@ -506,7 +458,6 @@ virtio_crypto_sym_input_data_helper(VirtIODevice *vdev,
                 CryptoDevBackendSymOpInfo *sym_op_info)
 {
     size_t s, len;
-    struct iovec *in_iov = req->in_iov;
 
     if (status != VIRTIO_CRYPTO_OK) {
         return;
@@ -514,18 +465,18 @@ virtio_crypto_sym_input_data_helper(VirtIODevice *vdev,
 
     len = sym_op_info->src_len;
     /* Save the cipher result */
-    s = iov_from_buf(in_iov, req->in_num, 0, sym_op_info->dst, len);
+    s = iov_from_buf(req->in_iov, req->in_num, 0, sym_op_info->dst, len);
     if (s != len) {
         virtio_error(vdev, "virtio-crypto dest data incorrect");
         return;
     }
 
-    iov_discard_front(&in_iov, &req->in_num, len);
+    iov_discard_front(&req->in_iov, &req->in_num, len);
 
     if (sym_op_info->op_type ==
                       VIRTIO_CRYPTO_SYM_OP_ALGORITHM_CHAINING) {
         /* Save the digest result */
-        s = iov_from_buf(in_iov, req->in_num, 0,
+        s = iov_from_buf(req->in_iov, req->in_num, 0,
                          sym_op_info->digest_result,
                          sym_op_info->digest_result_len);
         if (s != sym_op_info->digest_result_len) {
@@ -540,7 +491,6 @@ virtio_crypto_akcipher_input_data_helper(VirtIODevice *vdev,
         CryptoDevBackendAsymOpInfo *asym_op_info)
 {
     size_t s, len;
-    struct iovec *in_iov = req->in_iov;
 
     if (status != VIRTIO_CRYPTO_OK) {
         return;
@@ -551,24 +501,23 @@ virtio_crypto_akcipher_input_data_helper(VirtIODevice *vdev,
         return;
     }
 
-    s = iov_from_buf(in_iov, req->in_num, 0, asym_op_info->dst, len);
+    s = iov_from_buf(req->in_iov, req->in_num, 0, asym_op_info->dst, len);
     if (s != len) {
         virtio_error(vdev, "virtio-crypto asym dest data incorrect");
         return;
     }
 
-    iov_discard_front(&in_iov, &req->in_num, len);
+    iov_discard_front(&req->in_iov, &req->in_num, len);
 
     /* For akcipher, dst_len may be changed after operation */
     req->in_len = sizeof(struct virtio_crypto_inhdr) + asym_op_info->dst_len;
 }
 
-static void virtio_crypto_req_complete(void *opaque, int ret)
+
+static void virtio_crypto_req_complete(VirtIOCryptoReq *req, uint8_t status)
 {
-    VirtIOCryptoReq *req = (VirtIOCryptoReq *)opaque;
     VirtIOCrypto *vcrypto = req->vcrypto;
     VirtIODevice *vdev = VIRTIO_DEVICE(vcrypto);
-    uint8_t status = -ret;
 
     if (req->flags == CRYPTODEV_BACKEND_ALG_SYM) {
         virtio_crypto_sym_input_data_helper(vdev, req, status,
@@ -580,7 +529,6 @@ static void virtio_crypto_req_complete(void *opaque, int ret)
     stb_p(&req->in->status, status);
     virtqueue_push(req->vq, &req->elem, req->in_len);
     virtio_notify(vdev, req->vq);
-    virtio_crypto_free_request(req);
 }
 
 static VirtIOCryptoReq *
@@ -762,7 +710,7 @@ virtio_crypto_handle_asym_req(VirtIOCrypto *vcrypto,
     uint8_t *src = NULL;
     uint8_t *dst = NULL;
 
-    asym_op_info = g_new0(CryptoDevBackendAsymOpInfo, 1);
+    asym_op_info = g_malloc0(sizeof(CryptoDevBackendAsymOpInfo));
     src_len = ldl_le_p(&req->para.src_data_len);
     dst_len = ldl_le_p(&req->para.dst_data_len);
 
@@ -825,7 +773,9 @@ virtio_crypto_handle_request(VirtIOCryptoReq *request)
     unsigned in_num;
     unsigned out_num;
     uint32_t opcode;
+    uint8_t status = VIRTIO_CRYPTO_ERR;
     CryptoDevBackendOpInfo *op_info = &request->op_info;
+    Error *local_err = NULL;
 
     if (elem->out_num < 1 || elem->in_num < 1) {
         virtio_error(vdev, "virtio-crypto dataq missing headers");
@@ -865,8 +815,6 @@ virtio_crypto_handle_request(VirtIOCryptoReq *request)
      */
     request->in_num = in_num;
     request->in_iov = in_iov;
-    /* now, we free the in_iov_copy inside virtio_crypto_free_request */
-    in_iov_copy = NULL;
 
     opcode = ldl_le_p(&req.header.opcode);
     op_info->session_id = ldq_le_p(&req.header.session_id);
@@ -895,15 +843,23 @@ check_result:
         if (ret == -EFAULT) {
             return -1;
         } else if (ret == -VIRTIO_CRYPTO_NOTSUPP) {
-            virtio_crypto_req_complete(request, -VIRTIO_CRYPTO_NOTSUPP);
+            virtio_crypto_req_complete(request, VIRTIO_CRYPTO_NOTSUPP);
+            virtio_crypto_free_request(request);
         } else {
+
+            /* Set request's parameter */
             ret = cryptodev_backend_crypto_operation(vcrypto->cryptodev,
-                                    request, queue_index,
-                                    virtio_crypto_req_complete,
-                                    request);
+                                    request, queue_index, &local_err);
             if (ret < 0) {
-                virtio_crypto_req_complete(request, ret);
+                status = -ret;
+                if (local_err) {
+                    error_report_err(local_err);
+                }
+            } else { /* ret == VIRTIO_CRYPTO_OK */
+                status = ret;
             }
+            virtio_crypto_req_complete(request, status);
+            virtio_crypto_free_request(request);
         }
         break;
 
@@ -914,7 +870,8 @@ check_result:
     default:
         error_report("virtio-crypto unsupported dataq opcode: %u",
                      opcode);
-        virtio_crypto_req_complete(request, -VIRTIO_CRYPTO_NOTSUPP);
+        virtio_crypto_req_complete(request, VIRTIO_CRYPTO_NOTSUPP);
+        virtio_crypto_free_request(request);
     }
 
     return 0;
@@ -1054,7 +1011,7 @@ static void virtio_crypto_device_realize(DeviceState *dev, Error **errp)
         vcrypto->vqs[i].vcrypto = vcrypto;
     }
 
-    vcrypto->ctrl_vq = virtio_add_queue(vdev, 1024, virtio_crypto_handle_ctrl);
+    vcrypto->ctrl_vq = virtio_add_queue(vdev, 64, virtio_crypto_handle_ctrl);
     if (!cryptodev_backend_is_ready(vcrypto->cryptodev)) {
         vcrypto->status &= ~VIRTIO_CRYPTO_S_HW_READY;
     } else {

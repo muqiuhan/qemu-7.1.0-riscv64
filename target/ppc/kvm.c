@@ -2966,7 +2966,3 @@ bool kvm_arch_cpu_check_are_resettable(void)
 {
     return true;
 }
-
-void kvm_arch_accel_class_init(ObjectClass *oc)
-{
-}

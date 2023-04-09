@@ -69,8 +69,7 @@ static int ae350_console_init(void)
 			     AE350_UART_FREQUENCY,
 			     AE350_UART_BAUDRATE,
 			     AE350_UART_REG_SHIFT,
-			     AE350_UART_REG_WIDTH,
-			     AE350_UART_REG_OFFSET);
+			     AE350_UART_REG_WIDTH);
 }
 
 /* Initialize the platform interrupt controller for current HART. */

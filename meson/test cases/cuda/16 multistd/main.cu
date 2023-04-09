@@ -7,7 +7,6 @@ auto cuda_devices(void) {
     return result;
 }
 
-int do_cuda_stuff();
 
 int main(void) {
     int n = cuda_devices();
@@ -17,5 +16,5 @@ int main(void) {
     }
 
     std::cout << "Found " << n << "Cuda devices.\n";
-    return do_cuda_stuff();
+    return 0;
 }

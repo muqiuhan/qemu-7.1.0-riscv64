@@ -26,7 +26,7 @@ from .. import mesonlib, mlog
 from ..compilers import AppleClangCCompiler, AppleClangCPPCompiler, detect_compiler_for
 from ..environment import get_llvm_tool_names
 from ..mesonlib import version_compare, stringlistify, extract_as_list, MachineChoice
-from .base import DependencyException, DependencyMethods, strip_system_libdirs, SystemDependency, ExternalDependency, DependencyTypeName
+from .base import DependencyException, DependencyMethods, strip_system_libdirs, SystemDependency
 from .cmake import CMakeDependency
 from .configtool import ConfigToolDependency
 from .factory import DependencyFactory
@@ -106,6 +106,10 @@ class GTestDependencySystem(SystemDependency):
     def log_tried(self) -> str:
         return 'system'
 
+    @staticmethod
+    def get_methods() -> T.List[DependencyMethods]:
+        return [DependencyMethods.PKGCONFIG, DependencyMethods.SYSTEM]
+
 
 class GTestDependencyPC(PkgConfigDependency):
 
@@ -177,6 +181,10 @@ class GMockDependencySystem(SystemDependency):
     def log_tried(self) -> str:
         return 'system'
 
+    @staticmethod
+    def get_methods() -> T.List[DependencyMethods]:
+        return [DependencyMethods.PKGCONFIG, DependencyMethods.SYSTEM]
+
 
 class GMockDependencyPC(PkgConfigDependency):
 
@@ -211,7 +219,7 @@ class LLVMDependencyConfigTool(ConfigToolDependency):
         # the C linker works fine if only using the C API.
         super().__init__(name, environment, kwargs, language='cpp')
         self.provided_modules: T.List[str] = []
-        self.required_modules: mesonlib.OrderedSet[str] = mesonlib.OrderedSet()
+        self.required_modules: mesonlib.OrderedSet[str]  = mesonlib.OrderedSet()
         self.module_details:   T.List[str] = []
         if not self.is_found:
             return
@@ -392,25 +400,7 @@ class LLVMDependencyCMake(CMakeDependency):
     def __init__(self, name: str, env: 'Environment', kwargs: T.Dict[str, T.Any]) -> None:
         self.llvm_modules = stringlistify(extract_as_list(kwargs, 'modules'))
         self.llvm_opt_modules = stringlistify(extract_as_list(kwargs, 'optional_modules'))
-
-        compilers = None
-        if kwargs.get('native', False):
-            compilers = env.coredata.compilers.build
-        else:
-            compilers = env.coredata.compilers.host
-        if not compilers or not all(x in compilers for x in ('c', 'cpp')):
-            # Initialize basic variables
-            ExternalDependency.__init__(self, DependencyTypeName('cmake'), env, kwargs)
-
-            # Initialize CMake specific variables
-            self.found_modules: T.List[str] = []
-            self.name = name
-
-            # Warn and return
-            mlog.warning('The LLVM dependency was not found via CMake since both a C and C++ compiler are required.')
-            return
-
-        super().__init__(name, env, kwargs, language='cpp', force_use_global_compilers=True)
+        super().__init__(name, env, kwargs, language='cpp')
 
         # Cmake will always create a statically linked binary, so don't use
         # cmake if dynamic is required
@@ -484,15 +474,15 @@ class ZlibSystemDependency(SystemDependency):
         # I'm not sure this is entirely correct. What if we're cross compiling
         # from something to macOS?
         if ((m.is_darwin() and isinstance(self.clib_compiler, (AppleClangCCompiler, AppleClangCPPCompiler))) or
-                m.is_freebsd() or m.is_dragonflybsd() or m.is_android()):
+                m.is_freebsd() or m.is_dragonflybsd()):
             # No need to set includes,
             # on macos xcode/clang will do that for us.
             # on freebsd zlib.h is in /usr/include
 
             self.is_found = True
             self.link_args = ['-lz']
-        else:
-            # Without a clib_compiler we can't find zlib, so just give up.
+        elif m.is_windows():
+            # Without a clib_compiler we can't find zlib, s just give up.
             if self.clib_compiler is None:
                 self.is_found = False
                 return
@@ -510,9 +500,17 @@ class ZlibSystemDependency(SystemDependency):
                     break
             else:
                 return
+        else:
+            mlog.debug(f'Unsupported OS {m.system}')
+            return
 
         v, _ = self.clib_compiler.get_define('ZLIB_VERSION', '#include <zlib.h>', self.env, [], [self])
         self.version = v.strip('"')
+
+
+    @staticmethod
+    def get_methods() -> T.List[DependencyMethods]:
+        return [DependencyMethods.SYSTEM]
 
 
 class JDKSystemDependency(SystemDependency):
@@ -547,6 +545,10 @@ class JDKSystemDependency(SystemDependency):
         self.is_found = True
 
     @staticmethod
+    def get_methods() -> T.List[DependencyMethods]:
+        return [DependencyMethods.SYSTEM]
+
+    @staticmethod
     def __machine_info_to_platform_include_dir(m: 'MachineInfo') -> T.Optional[str]:
         """Translates the machine information to the platform-dependent include directory
 
@@ -560,8 +562,6 @@ class JDKSystemDependency(SystemDependency):
             return 'win32'
         elif m.is_darwin():
             return 'darwin'
-        elif m.is_sunos():
-            return 'solaris'
 
         return None
 

@@ -16,11 +16,6 @@
 #include "qemu/error-report.h"
 #include "standard-headers/linux/virtio_ids.h"
 
-static const int feature_bits[] = {
-    VIRTIO_F_RING_RESET,
-    VHOST_INVALID_FEATURE_BIT
-};
-
 static void vu_rng_start(VirtIODevice *vdev)
 {
     VHostUserRNG *rng = VHOST_USER_RNG(vdev);
@@ -47,7 +42,7 @@ static void vu_rng_start(VirtIODevice *vdev)
     }
 
     rng->vhost_dev.acked_features = vdev->guest_features;
-    ret = vhost_dev_start(&rng->vhost_dev, vdev, true);
+    ret = vhost_dev_start(&rng->vhost_dev, vdev);
     if (ret < 0) {
         error_report("Error starting vhost-user-rng: %d", -ret);
         goto err_guest_notifiers;
@@ -81,7 +76,7 @@ static void vu_rng_stop(VirtIODevice *vdev)
         return;
     }
 
-    vhost_dev_stop(&rng->vhost_dev, vdev, true);
+    vhost_dev_stop(&rng->vhost_dev, vdev);
 
     ret = k->set_guest_notifiers(qbus->parent, rng->vhost_dev.nvqs, false);
     if (ret < 0) {
@@ -95,9 +90,13 @@ static void vu_rng_stop(VirtIODevice *vdev)
 static void vu_rng_set_status(VirtIODevice *vdev, uint8_t status)
 {
     VHostUserRNG *rng = VHOST_USER_RNG(vdev);
-    bool should_start = virtio_device_should_start(vdev, status);
+    bool should_start = status & VIRTIO_CONFIG_S_DRIVER_OK;
 
-    if (vhost_dev_is_started(&rng->vhost_dev) == should_start) {
+    if (!vdev->vm_running) {
+        should_start = false;
+    }
+
+    if (rng->vhost_dev.started == should_start) {
         return;
     }
 
@@ -111,10 +110,8 @@ static void vu_rng_set_status(VirtIODevice *vdev, uint8_t status)
 static uint64_t vu_rng_get_features(VirtIODevice *vdev,
                                     uint64_t requested_features, Error **errp)
 {
-    VHostUserRNG *rng = VHOST_USER_RNG(vdev);
-
-    return vhost_get_features(&rng->vhost_dev, feature_bits,
-                              requested_features);
+    /* No feature bits used yet */
+    return requested_features;
 }
 
 static void vu_rng_handle_output(VirtIODevice *vdev, VirtQueue *vq)
@@ -167,7 +164,7 @@ static void vu_rng_disconnect(DeviceState *dev)
 
     rng->connected = false;
 
-    if (vhost_dev_is_started(&rng->vhost_dev)) {
+    if (rng->vhost_dev.started) {
         vu_rng_stop(vdev);
     }
 }

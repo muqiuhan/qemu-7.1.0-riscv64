@@ -31,8 +31,7 @@
 #include "qemu/memalign.h"
 #include "trace.h"
 
-int coroutine_fn qcow2_shrink_l1_table(BlockDriverState *bs,
-                                       uint64_t exact_size)
+int qcow2_shrink_l1_table(BlockDriverState *bs, uint64_t exact_size)
 {
     BDRVQcow2State *s = bs->opaque;
     int new_l1_size, i, ret;
@@ -48,14 +47,14 @@ int coroutine_fn qcow2_shrink_l1_table(BlockDriverState *bs,
 #endif
 
     BLKDBG_EVENT(bs->file, BLKDBG_L1_SHRINK_WRITE_TABLE);
-    ret = bdrv_co_pwrite_zeroes(bs->file,
-                                s->l1_table_offset + new_l1_size * L1E_SIZE,
-                                (s->l1_size - new_l1_size) * L1E_SIZE, 0);
+    ret = bdrv_pwrite_zeroes(bs->file, s->l1_table_offset +
+                                       new_l1_size * L1E_SIZE,
+                             (s->l1_size - new_l1_size) * L1E_SIZE, 0);
     if (ret < 0) {
         goto fail;
     }
 
-    ret = bdrv_co_flush(bs->file->bs);
+    ret = bdrv_flush(bs->file->bs);
     if (ret < 0) {
         goto fail;
     }
@@ -824,10 +823,10 @@ static int get_cluster_table(BlockDriverState *bs, uint64_t offset,
  *
  * Return 0 on success and -errno in error cases
  */
-int coroutine_fn qcow2_alloc_compressed_cluster_offset(BlockDriverState *bs,
-                                                       uint64_t offset,
-                                                       int compressed_size,
-                                                       uint64_t *host_offset)
+int qcow2_alloc_compressed_cluster_offset(BlockDriverState *bs,
+                                          uint64_t offset,
+                                          int compressed_size,
+                                          uint64_t *host_offset)
 {
     BDRVQcow2State *s = bs->opaque;
     int l2_index, ret;
@@ -885,7 +884,7 @@ int coroutine_fn qcow2_alloc_compressed_cluster_offset(BlockDriverState *bs,
     return 0;
 }
 
-static int coroutine_fn perform_cow(BlockDriverState *bs, QCowL2Meta *m)
+static int perform_cow(BlockDriverState *bs, QCowL2Meta *m)
 {
     BDRVQcow2State *s = bs->opaque;
     Qcow2COWRegion *start = &m->cow_start;
@@ -1025,8 +1024,7 @@ fail:
     return ret;
 }
 
-int coroutine_fn qcow2_alloc_cluster_link_l2(BlockDriverState *bs,
-                                             QCowL2Meta *m)
+int qcow2_alloc_cluster_link_l2(BlockDriverState *bs, QCowL2Meta *m)
 {
     BDRVQcow2State *s = bs->opaque;
     int i, j = 0, l2_index, ret;
@@ -1399,9 +1397,8 @@ static int count_single_write_clusters(BlockDriverState *bs, int nb_clusters,
  *           information on cluster allocation may be invalid now. The caller
  *           must start over anyway, so consider *cur_bytes undefined.
  */
-static int coroutine_fn handle_dependencies(BlockDriverState *bs,
-                                            uint64_t guest_offset,
-                                            uint64_t *cur_bytes, QCowL2Meta **m)
+static int handle_dependencies(BlockDriverState *bs, uint64_t guest_offset,
+    uint64_t *cur_bytes, QCowL2Meta **m)
 {
     BDRVQcow2State *s = bs->opaque;
     QCowL2Meta *old_alloc;
@@ -1489,9 +1486,8 @@ static int coroutine_fn handle_dependencies(BlockDriverState *bs,
  *
  *  -errno: in error cases
  */
-static int coroutine_fn handle_copied(BlockDriverState *bs,
-    uint64_t guest_offset, uint64_t *host_offset, uint64_t *bytes,
-    QCowL2Meta **m)
+static int handle_copied(BlockDriverState *bs, uint64_t guest_offset,
+    uint64_t *host_offset, uint64_t *bytes, QCowL2Meta **m)
 {
     BDRVQcow2State *s = bs->opaque;
     int l2_index;
@@ -1655,9 +1651,8 @@ static int do_alloc_cluster_offset(BlockDriverState *bs, uint64_t guest_offset,
  *
  *  -errno: in error cases
  */
-static int coroutine_fn handle_alloc(BlockDriverState *bs,
-    uint64_t guest_offset, uint64_t *host_offset, uint64_t *bytes,
-    QCowL2Meta **m)
+static int handle_alloc(BlockDriverState *bs, uint64_t guest_offset,
+    uint64_t *host_offset, uint64_t *bytes, QCowL2Meta **m)
 {
     BDRVQcow2State *s = bs->opaque;
     int l2_index;
@@ -1777,10 +1772,9 @@ out:
  *
  * Return 0 on success and -errno in error cases
  */
-int coroutine_fn qcow2_alloc_host_offset(BlockDriverState *bs, uint64_t offset,
-                                         unsigned int *bytes,
-                                         uint64_t *host_offset,
-                                         QCowL2Meta **m)
+int qcow2_alloc_host_offset(BlockDriverState *bs, uint64_t offset,
+                            unsigned int *bytes, uint64_t *host_offset,
+                            QCowL2Meta **m)
 {
     BDRVQcow2State *s = bs->opaque;
     uint64_t start, remaining;
@@ -2111,8 +2105,8 @@ out:
     return ret;
 }
 
-int coroutine_fn qcow2_subcluster_zeroize(BlockDriverState *bs, uint64_t offset,
-                                          uint64_t bytes, int flags)
+int qcow2_subcluster_zeroize(BlockDriverState *bs, uint64_t offset,
+                             uint64_t bytes, int flags)
 {
     BDRVQcow2State *s = bs->opaque;
     uint64_t end_offset = offset + bytes;

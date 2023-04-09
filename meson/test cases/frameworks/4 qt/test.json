@@ -2,11 +2,10 @@
   "matrix": {
     "options": {
       "method": [
-        { "val": "config-tool" },
-        { "val": "qmake" },
+        { "val": "config-tool", "skip_on_jobname": ["fedora", "opensuse"] },
+        { "val": "qmake", "skip_on_jobname": ["fedora", "opensuse"] },
         { "val": "pkg-config" }
       ]
     }
-  },
-  "skip_on_jobname": ["cygwin", "msys2", "azure"]
+  }
 }

@@ -8,7 +8,6 @@ Notes about how to interact with the community and how and where to submit patch
 
    code-of-conduct
    conflict-resolution
-   maintainers
    style
    submitting-a-patch
    trivial-patches

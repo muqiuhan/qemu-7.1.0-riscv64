@@ -1,4 +1,4 @@
-# Copied from GStreamer project
+# Copyied from GStreamer project
 # Author: Seungha Yang <seungha.yang@navercorp.com>
 
 $i=1

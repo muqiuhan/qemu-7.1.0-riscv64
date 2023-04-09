@@ -41,12 +41,12 @@ Those hosts are officially supported, with various accelerators:
      - Accelerators
    * - Arm
      - kvm (64 bit only), tcg, xen
-   * - MIPS (little endian only)
+   * - MIPS
      - kvm, tcg
    * - PPC
      - kvm, tcg
    * - RISC-V
-     - kvm, tcg
+     - tcg
    * - s390x
      - kvm, tcg
    * - SPARC

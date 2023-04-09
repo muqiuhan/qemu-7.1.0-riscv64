@@ -9,3 +9,4 @@ assert(get_option('fromspfunc') == 'spfunc', 'Default option set with subproject
 assert(get_option('fromspfunconly') == 'spfunc', 'Default option set with subproject() incorrect: ' + get_option('fromspfunc'))
 assert(get_option('defopoverride') == 's_defopt', 'Default option without cmd line override is incorrect: ' + get_option('defopoverride'))
 assert(get_option('fromoptfile') == 's_optfile', 'Default value from option file is incorrect: ' + get_option('fromoptfile'))
+

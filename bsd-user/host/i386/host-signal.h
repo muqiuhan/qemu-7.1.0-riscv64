@@ -9,7 +9,6 @@
 #ifndef I386_HOST_SIGNAL_H
 #define I386_HOST_SIGNAL_H
 
-#include <sys/param.h>
 #include <sys/ucontext.h>
 #include <machine/trap.h>
 #include <vm/pmap.h>

@@ -17,8 +17,6 @@
 #include "qemu.h"
 #include "user-internals.h"
 #include "strace.h"
-#include "signal-common.h"
-#include "target_mman.h"
 
 struct syscallname {
     int nr;
@@ -83,7 +81,6 @@ UNUSED static void print_buf(abi_long addr, abi_long len, int last);
 UNUSED static void print_raw_param(const char *, abi_long, int);
 UNUSED static void print_timeval(abi_ulong, int);
 UNUSED static void print_timespec(abi_ulong, int);
-UNUSED static void print_timespec64(abi_ulong, int);
 UNUSED static void print_timezone(abi_ulong, int);
 UNUSED static void print_itimerval(abi_ulong, int);
 UNUSED static void print_number(abi_long, int);
@@ -144,21 +141,30 @@ if( cmd == val ) { \
     qemu_log("%d", cmd);
 }
 
-static const char * const target_signal_name[] = {
-#define MAKE_SIG_ENTRY(sig)     [TARGET_##sig] = #sig,
-        MAKE_SIGNAL_LIST
-#undef MAKE_SIG_ENTRY
-};
-
 static void
 print_signal(abi_ulong arg, int last)
 {
     const char *signal_name = NULL;
-
-    if (arg < ARRAY_SIZE(target_signal_name)) {
-        signal_name = target_signal_name[arg];
+    switch(arg) {
+    case TARGET_SIGHUP: signal_name = "SIGHUP"; break;
+    case TARGET_SIGINT: signal_name = "SIGINT"; break;
+    case TARGET_SIGQUIT: signal_name = "SIGQUIT"; break;
+    case TARGET_SIGILL: signal_name = "SIGILL"; break;
+    case TARGET_SIGABRT: signal_name = "SIGABRT"; break;
+    case TARGET_SIGFPE: signal_name = "SIGFPE"; break;
+    case TARGET_SIGKILL: signal_name = "SIGKILL"; break;
+    case TARGET_SIGSEGV: signal_name = "SIGSEGV"; break;
+    case TARGET_SIGPIPE: signal_name = "SIGPIPE"; break;
+    case TARGET_SIGALRM: signal_name = "SIGALRM"; break;
+    case TARGET_SIGTERM: signal_name = "SIGTERM"; break;
+    case TARGET_SIGUSR1: signal_name = "SIGUSR1"; break;
+    case TARGET_SIGUSR2: signal_name = "SIGUSR2"; break;
+    case TARGET_SIGCHLD: signal_name = "SIGCHLD"; break;
+    case TARGET_SIGCONT: signal_name = "SIGCONT"; break;
+    case TARGET_SIGSTOP: signal_name = "SIGSTOP"; break;
+    case TARGET_SIGTTIN: signal_name = "SIGTTIN"; break;
+    case TARGET_SIGTTOU: signal_name = "SIGTTOU"; break;
     }
-
     if (signal_name == NULL) {
         print_raw_param("%ld", arg, last);
         return;
@@ -795,24 +801,6 @@ print_syscall_ret_clock_gettime(CPUArchState *cpu_env, const struct syscallname 
     qemu_log("\n");
 }
 #define print_syscall_ret_clock_getres     print_syscall_ret_clock_gettime
-#endif
-
-#if defined(TARGET_NR_clock_gettime64)
-static void
-print_syscall_ret_clock_gettime64(CPUArchState *cpu_env, const struct syscallname *name,
-                                abi_long ret, abi_long arg0, abi_long arg1,
-                                abi_long arg2, abi_long arg3, abi_long arg4,
-                                abi_long arg5)
-{
-    if (!print_syscall_err(ret)) {
-        qemu_log(TARGET_ABI_FMT_ld, ret);
-        qemu_log(" (");
-        print_timespec64(arg1, 1);
-        qemu_log(")");
-    }
-
-    qemu_log("\n");
-}
 #endif
 
 #ifdef TARGET_NR_gettimeofday
@@ -1506,11 +1494,6 @@ print_file_mode(abi_long mode, int last)
     const char *sep = "";
     const struct flags *m;
 
-    if (mode == 0) {
-        qemu_log("000%s", get_comma(last));
-        return;
-    }
-
     for (m = &mode_flags[0]; m->f_string != NULL; m++) {
         if ((m->f_value & mode) == m->f_value) {
             qemu_log("%s%s", m->f_string, sep);
@@ -1671,27 +1654,6 @@ print_timespec(abi_ulong ts_addr, int last)
         qemu_log("{tv_sec = " TARGET_ABI_FMT_ld
                  ",tv_nsec = " TARGET_ABI_FMT_ld "}%s",
                  tswapal(ts->tv_sec), tswapal(ts->tv_nsec), get_comma(last));
-        unlock_user(ts, ts_addr, 0);
-    } else {
-        qemu_log("NULL%s", get_comma(last));
-    }
-}
-
-static void
-print_timespec64(abi_ulong ts_addr, int last)
-{
-    if (ts_addr) {
-        struct target__kernel_timespec *ts;
-
-        ts = lock_user(VERIFY_READ, ts_addr, sizeof(*ts), 1);
-        if (!ts) {
-            print_pointer(ts_addr, last);
-            return;
-        }
-        qemu_log("{tv_sec = %lld"
-                 ",tv_nsec = %lld}%s",
-                 (long long)tswap64(ts->tv_sec), (long long)tswap64(ts->tv_nsec),
-                 get_comma(last));
         unlock_user(ts, ts_addr, 0);
     } else {
         qemu_log("NULL%s", get_comma(last));
@@ -1969,7 +1931,7 @@ print_execv(CPUArchState *cpu_env, const struct syscallname *name,
 }
 #endif
 
-#if defined(TARGET_NR_faccessat) || defined(TARGET_NR_faccessat2)
+#ifdef TARGET_NR_faccessat
 static void
 print_faccessat(CPUArchState *cpu_env, const struct syscallname *name,
                 abi_long arg0, abi_long arg1, abi_long arg2,
@@ -2311,19 +2273,6 @@ print_clock_gettime(CPUArchState *cpu_env, const struct syscallname *name,
     print_syscall_epilogue(name);
 }
 #define print_clock_getres     print_clock_gettime
-#endif
-
-#if defined(TARGET_NR_clock_gettime64)
-static void
-print_clock_gettime64(CPUArchState *cpu_env, const struct syscallname *name,
-                    abi_long arg0, abi_long arg1, abi_long arg2,
-                    abi_long arg3, abi_long arg4, abi_long arg5)
-{
-    print_syscall_prologue(name);
-    print_enums(clockids, arg0, 0);
-    print_pointer(arg1, 1);
-    print_syscall_epilogue(name);
-}
 #endif
 
 #ifdef TARGET_NR_clock_settime
@@ -3020,46 +2969,6 @@ print_stat(CPUArchState *cpu_env, const struct syscallname *name,
 #define print_lstat64   print_stat
 #endif
 
-#if defined(TARGET_NR_madvise)
-static struct enums madvise_advice[] = {
-    ENUM_TARGET(MADV_NORMAL),
-    ENUM_TARGET(MADV_RANDOM),
-    ENUM_TARGET(MADV_SEQUENTIAL),
-    ENUM_TARGET(MADV_WILLNEED),
-    ENUM_TARGET(MADV_DONTNEED),
-    ENUM_TARGET(MADV_FREE),
-    ENUM_TARGET(MADV_REMOVE),
-    ENUM_TARGET(MADV_DONTFORK),
-    ENUM_TARGET(MADV_DOFORK),
-    ENUM_TARGET(MADV_MERGEABLE),
-    ENUM_TARGET(MADV_UNMERGEABLE),
-    ENUM_TARGET(MADV_HUGEPAGE),
-    ENUM_TARGET(MADV_NOHUGEPAGE),
-    ENUM_TARGET(MADV_DONTDUMP),
-    ENUM_TARGET(MADV_DODUMP),
-    ENUM_TARGET(MADV_WIPEONFORK),
-    ENUM_TARGET(MADV_KEEPONFORK),
-    ENUM_TARGET(MADV_COLD),
-    ENUM_TARGET(MADV_PAGEOUT),
-    ENUM_TARGET(MADV_POPULATE_READ),
-    ENUM_TARGET(MADV_POPULATE_WRITE),
-    ENUM_TARGET(MADV_DONTNEED_LOCKED),
-    ENUM_END,
-};
-
-static void
-print_madvise(CPUArchState *cpu_env, const struct syscallname *name,
-              abi_long arg0, abi_long arg1, abi_long arg2,
-              abi_long arg3, abi_long arg4, abi_long arg5)
-{
-    print_syscall_prologue(name);
-    print_pointer(arg0, 0);
-    print_raw_param("%d", arg1, 0);
-    print_enums(madvise_advice, arg2, 1);
-    print_syscall_epilogue(name);
-}
-#endif
-
 #if defined(TARGET_NR_fstat) || defined(TARGET_NR_fstat64)
 static void
 print_fstat(CPUArchState *cpu_env, const struct syscallname *name,
@@ -3363,34 +3272,6 @@ print_openat(CPUArchState *cpu_env, const struct syscallname *name,
 }
 #endif
 
-#ifdef TARGET_NR_pidfd_send_signal
-static void
-print_pidfd_send_signal(CPUArchState *cpu_env, const struct syscallname *name,
-                abi_long arg0, abi_long arg1, abi_long arg2,
-                abi_long arg3, abi_long arg4, abi_long arg5)
-{
-    void *p;
-    target_siginfo_t uinfo;
-
-    print_syscall_prologue(name);
-    print_raw_param("%d", arg0, 0);
-    print_signal(arg1, 0);
-
-    p = lock_user(VERIFY_READ, arg2, sizeof(target_siginfo_t), 1);
-    if (p) {
-        get_target_siginfo(&uinfo, p);
-        print_siginfo(&uinfo);
-
-        unlock_user(p, arg2, 0);
-    } else {
-        print_pointer(arg2, 0);
-    }
-
-    print_raw_param("%u", arg3, 1);
-    print_syscall_epilogue(name);
-}
-#endif
-
 #ifdef TARGET_NR_mq_unlink
 static void
 print_mq_unlink(CPUArchState *cpu_env, const struct syscallname *name,
@@ -3608,21 +3489,6 @@ print_unshare(CPUArchState *cpu_env, const struct syscallname *name,
 }
 #endif
 
-#ifdef TARGET_NR_clock_nanosleep
-static void
-print_clock_nanosleep(CPUArchState *cpu_env, const struct syscallname *name,
-                abi_long arg0, abi_long arg1, abi_long arg2,
-                abi_long arg3, abi_long arg4, abi_long arg5)
-{
-    print_syscall_prologue(name);
-    print_enums(clockids, arg0, 0);
-    print_raw_param("%d", arg1, 0);
-    print_timespec(arg2, 0);
-    print_timespec(arg3, 1);
-    print_syscall_epilogue(name);
-}
-#endif
-
 #ifdef TARGET_NR_utime
 static void
 print_utime(CPUArchState *cpu_env, const struct syscallname *name,
@@ -3710,37 +3576,44 @@ print_munmap(CPUArchState *cpu_env, const struct syscallname *name,
 #endif
 
 #ifdef TARGET_NR_futex
-static void print_futex_op(int cmd, int last)
+static void print_futex_op(abi_long tflag, int last)
 {
-    static const char * const futex_names[] = {
-#define NAME(X)  [X] = #X
-        NAME(FUTEX_WAIT),
-        NAME(FUTEX_WAKE),
-        NAME(FUTEX_FD),
-        NAME(FUTEX_REQUEUE),
-        NAME(FUTEX_CMP_REQUEUE),
-        NAME(FUTEX_WAKE_OP),
-        NAME(FUTEX_LOCK_PI),
-        NAME(FUTEX_UNLOCK_PI),
-        NAME(FUTEX_TRYLOCK_PI),
-        NAME(FUTEX_WAIT_BITSET),
-        NAME(FUTEX_WAKE_BITSET),
-        NAME(FUTEX_WAIT_REQUEUE_PI),
-        NAME(FUTEX_CMP_REQUEUE_PI),
-        NAME(FUTEX_LOCK_PI2),
-#undef NAME
-    };
+#define print_op(val) \
+if( cmd == val ) { \
+    qemu_log(#val); \
+    return; \
+}
 
-    unsigned base_cmd = cmd & FUTEX_CMD_MASK;
-
-    if (base_cmd < ARRAY_SIZE(futex_names)) {
-        qemu_log("%s%s%s",
-                 (cmd & FUTEX_PRIVATE_FLAG ? "FUTEX_PRIVATE_FLAG|" : ""),
-                 (cmd & FUTEX_CLOCK_REALTIME ? "FUTEX_CLOCK_REALTIME|" : ""),
-                 futex_names[base_cmd]);
-    } else {
-        qemu_log("0x%x", cmd);
+    int cmd = (int)tflag;
+#ifdef FUTEX_PRIVATE_FLAG
+    if (cmd & FUTEX_PRIVATE_FLAG) {
+        qemu_log("FUTEX_PRIVATE_FLAG|");
+        cmd &= ~FUTEX_PRIVATE_FLAG;
     }
+#endif
+#ifdef FUTEX_CLOCK_REALTIME
+    if (cmd & FUTEX_CLOCK_REALTIME) {
+        qemu_log("FUTEX_CLOCK_REALTIME|");
+        cmd &= ~FUTEX_CLOCK_REALTIME;
+    }
+#endif
+    print_op(FUTEX_WAIT)
+    print_op(FUTEX_WAKE)
+    print_op(FUTEX_FD)
+    print_op(FUTEX_REQUEUE)
+    print_op(FUTEX_CMP_REQUEUE)
+    print_op(FUTEX_WAKE_OP)
+    print_op(FUTEX_LOCK_PI)
+    print_op(FUTEX_UNLOCK_PI)
+    print_op(FUTEX_TRYLOCK_PI)
+#ifdef FUTEX_WAIT_BITSET
+    print_op(FUTEX_WAIT_BITSET)
+#endif
+#ifdef FUTEX_WAKE_BITSET
+    print_op(FUTEX_WAKE_BITSET)
+#endif
+    /* unknown values */
+    qemu_log("%d", cmd);
 }
 
 static void
@@ -3748,23 +3621,11 @@ print_futex(CPUArchState *cpu_env, const struct syscallname *name,
             abi_long arg0, abi_long arg1, abi_long arg2,
             abi_long arg3, abi_long arg4, abi_long arg5)
 {
-    abi_long op = arg1 & FUTEX_CMD_MASK;
     print_syscall_prologue(name);
     print_pointer(arg0, 0);
     print_futex_op(arg1, 0);
     print_raw_param(",%d", arg2, 0);
-    switch (op) {
-        case FUTEX_WAIT:
-        case FUTEX_WAIT_BITSET:
-        case FUTEX_LOCK_PI:
-        case FUTEX_LOCK_PI2:
-        case FUTEX_WAIT_REQUEUE_PI:
-            print_timespec(arg3, 0);
-            break;
-        default:
-            print_pointer(arg3, 0);
-            break;
-    }
+    print_pointer(arg3, 0); /* struct timespec */
     print_pointer(arg4, 0);
     print_raw_param("%d", arg4, 1);
     print_syscall_epilogue(name);
@@ -3919,37 +3780,26 @@ print_syscall(CPUArchState *cpu_env, int num,
               abi_long arg4, abi_long arg5, abi_long arg6)
 {
     int i;
-    FILE *f;
-    const char *format = "%s(" TARGET_ABI_FMT_ld "," TARGET_ABI_FMT_ld ","
-                               TARGET_ABI_FMT_ld "," TARGET_ABI_FMT_ld ","
-                               TARGET_ABI_FMT_ld "," TARGET_ABI_FMT_ld ")";
+    const char *format="%s(" TARGET_ABI_FMT_ld "," TARGET_ABI_FMT_ld "," TARGET_ABI_FMT_ld "," TARGET_ABI_FMT_ld "," TARGET_ABI_FMT_ld "," TARGET_ABI_FMT_ld ")";
 
-    f = qemu_log_trylock();
-    if (!f) {
-        return;
-    }
-    fprintf(f, "%d ", getpid());
+    qemu_log("%d ", getpid());
 
-    for (i = 0; i < nsyscalls; i++) {
-        if (scnames[i].nr == num) {
-            if (scnames[i].call != NULL) {
-                scnames[i].call(cpu_env, &scnames[i], arg1, arg2, arg3,
-                                arg4, arg5, arg6);
+    for(i=0;i<nsyscalls;i++)
+        if( scnames[i].nr == num ) {
+            if( scnames[i].call != NULL ) {
+                scnames[i].call(
+                    cpu_env, &scnames[i], arg1, arg2, arg3, arg4, arg5, arg6);
             } else {
                 /* XXX: this format system is broken because it uses
                    host types and host pointers for strings */
-                if (scnames[i].format != NULL) {
+                if( scnames[i].format != NULL )
                     format = scnames[i].format;
-                }
-                fprintf(f, format, scnames[i].name, arg1, arg2,
-                        arg3, arg4, arg5, arg6);
+                qemu_log(format,
+                         scnames[i].name, arg1, arg2, arg3, arg4, arg5, arg6);
             }
-            qemu_log_unlock(f);
             return;
         }
-    }
-    fprintf(f, "Unknown syscall %d\n", num);
-    qemu_log_unlock(f);
+    qemu_log("Unknown syscall %d\n", num);
 }
 
 
@@ -3959,29 +3809,21 @@ print_syscall_ret(CPUArchState *cpu_env, int num, abi_long ret,
                   abi_long arg4, abi_long arg5, abi_long arg6)
 {
     int i;
-    FILE *f;
 
-    f = qemu_log_trylock();
-    if (!f) {
-        return;
-    }
-
-    for (i = 0; i < nsyscalls; i++) {
-        if (scnames[i].nr == num) {
-            if (scnames[i].result != NULL) {
+    for(i=0;i<nsyscalls;i++)
+        if( scnames[i].nr == num ) {
+            if( scnames[i].result != NULL ) {
                 scnames[i].result(cpu_env, &scnames[i], ret,
                                   arg1, arg2, arg3,
                                   arg4, arg5, arg6);
             } else {
                 if (!print_syscall_err(ret)) {
-                    fprintf(f, TARGET_ABI_FMT_ld, ret);
+                    qemu_log(TARGET_ABI_FMT_ld, ret);
                 }
-                fprintf(f, "\n");
+                qemu_log("\n");
             }
             break;
         }
-    }
-    qemu_log_unlock(f);
 }
 
 void print_taken_signal(int target_signum, const target_siginfo_t *tinfo)
@@ -3989,17 +3831,9 @@ void print_taken_signal(int target_signum, const target_siginfo_t *tinfo)
     /* Print the strace output for a signal being taken:
      * --- SIGSEGV {si_signo=SIGSEGV, si_code=SI_KERNEL, si_addr=0} ---
      */
-    FILE *f;
-
-    f = qemu_log_trylock();
-    if (!f) {
-        return;
-    }
-
-    fprintf(f, "--- ");
+    qemu_log("--- ");
     print_signal(target_signum, 1);
-    fprintf(f, " ");
+    qemu_log(" ");
     print_siginfo(tinfo);
-    fprintf(f, " ---\n");
-    qemu_log_unlock(f);
+    qemu_log(" ---\n");
 }

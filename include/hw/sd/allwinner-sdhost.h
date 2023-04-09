@@ -130,7 +130,6 @@ struct AwSdHostClass {
 
     /** Maximum buffer size in bytes per DMA descriptor */
     size_t max_desc_size;
-    bool   is_sun4i;
 
 };
 

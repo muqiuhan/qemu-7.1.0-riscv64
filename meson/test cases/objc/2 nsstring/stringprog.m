@@ -7,3 +7,4 @@ int main(void) {
   [str release];
   return result;
 }
+

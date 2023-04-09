@@ -21,10 +21,6 @@
  * LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
  * OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
  * THE SOFTWARE.
- *
- * References:
- *  [1] 82371FB (PIIX) AND 82371SB (PIIX3) PCI ISA IDE XCELERATOR,
- *      290550-002, Intel Corporation, April 1997.
  */
 
 #include "qemu/osdep.h"
@@ -36,7 +32,6 @@
 #include "sysemu/blockdev.h"
 #include "sysemu/dma.h"
 
-#include "hw/ide/piix.h"
 #include "hw/ide/pci.h"
 #include "trace.h"
 
@@ -119,11 +114,14 @@ static void piix_ide_reset(DeviceState *dev)
         ide_bus_reset(&d->bus[i]);
     }
 
-    /* PCI command register default value (0000h) per [1, p.48].  */
-    pci_set_word(pci_conf + PCI_COMMAND, 0x0000);
-    pci_set_word(pci_conf + PCI_STATUS,
-                 PCI_STATUS_DEVSEL_MEDIUM | PCI_STATUS_FAST_BACK);
-    pci_set_byte(pci_conf + 0x20, 0x01);  /* BMIBA: 20-23h */
+    /* TODO: this is the default. do not override. */
+    pci_conf[PCI_COMMAND] = 0x00;
+    /* TODO: this is the default. do not override. */
+    pci_conf[PCI_COMMAND + 1] = 0x00;
+    /* TODO: use pci_set_word */
+    pci_conf[PCI_STATUS] = PCI_STATUS_FAST_BACK;
+    pci_conf[PCI_STATUS + 1] = PCI_STATUS_DEVSEL_MEDIUM >> 8;
+    pci_conf[0x20] = 0x01; /* BMIBA: 20-23h */
 }
 
 static int pci_piix_init_ports(PCIIDEState *d)
@@ -203,7 +201,7 @@ static void piix3_ide_class_init(ObjectClass *klass, void *data)
 }
 
 static const TypeInfo piix3_ide_info = {
-    .name          = TYPE_PIIX3_IDE,
+    .name          = "piix3-ide",
     .parent        = TYPE_PCI_IDE,
     .class_init    = piix3_ide_class_init,
 };
@@ -225,7 +223,7 @@ static void piix4_ide_class_init(ObjectClass *klass, void *data)
 }
 
 static const TypeInfo piix4_ide_info = {
-    .name          = TYPE_PIIX4_IDE,
+    .name          = "piix4-ide",
     .parent        = TYPE_PCI_IDE,
     .class_init    = piix4_ide_class_init,
 };

@@ -27,13 +27,11 @@
 #include "hw/ppc/pnv_pnor.h"
 #include "hw/ppc/pnv_psi.h"
 #include "hw/ppc/pnv_occ.h"
-#include "hw/ppc/pnv_sbe.h"
 #include "hw/ppc/pnv_homer.h"
 #include "hw/ppc/pnv_xive.h"
 #include "hw/ppc/pnv_core.h"
 #include "hw/pci-host/pnv_phb3.h"
 #include "hw/pci-host/pnv_phb4.h"
-#include "hw/pci-host/pnv_phb.h"
 #include "qom/object.h"
 
 #define TYPE_PNV_CHIP "pnv-chip"
@@ -82,11 +80,7 @@ struct Pnv8Chip {
     PnvHomer     homer;
 
 #define PNV8_CHIP_PHB3_MAX 4
-    /*
-     * The array is used to allow quick access to the phbs by
-     * pnv_ics_get_child() and pnv_ics_resend_child().
-     */
-    PnvPHB       *phbs[PNV8_CHIP_PHB3_MAX];
+    PnvPHB3      phbs[PNV8_CHIP_PHB3_MAX];
     uint32_t     num_phbs;
 
     XICSFabric    *xics;
@@ -106,7 +100,6 @@ struct Pnv9Chip {
     Pnv9Psi      psi;
     PnvLpcController lpc;
     PnvOCC       occ;
-    PnvSBE       sbe;
     PnvHomer     homer;
 
     uint32_t     nr_quads;
@@ -136,7 +129,6 @@ struct Pnv10Chip {
     Pnv9Psi      psi;
     PnvLpcController lpc;
     PnvOCC       occ;
-    PnvSBE       sbe;
     PnvHomer     homer;
 
     uint32_t     nr_quads;
@@ -197,6 +189,8 @@ DECLARE_INSTANCE_CHECKER(PnvChip, PNV_CHIP_POWER10,
                          TYPE_PNV_CHIP_POWER10)
 
 PowerPCCPU *pnv_chip_find_cpu(PnvChip *chip, uint32_t pir);
+void pnv_phb_attach_root_port(PCIHostState *pci, const char *name,
+                              int index, int chip_id);
 
 #define TYPE_PNV_MACHINE       MACHINE_TYPE_NAME("powernv")
 typedef struct PnvMachineClass PnvMachineClass;
@@ -238,7 +232,6 @@ struct PnvMachineState {
 };
 
 PnvChip *pnv_get_chip(PnvMachineState *pnv, uint32_t chip_id);
-Object *pnv_chip_add_phb(PnvChip *chip, PnvPHB *phb, Error **errp);
 
 #define PNV_FDT_ADDR          0x01000000
 #define PNV_TIMEBASE_FREQ     512000000ULL

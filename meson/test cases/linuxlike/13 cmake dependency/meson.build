@@ -6,6 +6,9 @@ if not find_program('cmake', required: false).found()
   error('MESON_SKIP_TEST cmake binary not available.')
 endif
 
+# CMake version
+cm_vers = run_command(find_program('./cmVers.sh')).stdout().strip()
+
 # Zlib is probably on all dev machines.
 
 dep = dependency('ZLIB', version : '>=1.2', method : 'cmake')
@@ -55,18 +58,9 @@ depm1 = dependency('SomethingLikeZLIB', required : true, components : 'required_
 depm2 = dependency('SomethingLikeZLIB', required : true, components : 'required_comp',   method : 'cmake', cmake_module_path : ['cmake'])
 depm3 = dependency('SomethingLikeZLIB', required : true, components : ['required_comp'], cmake_module_path : 'cmake')
 
-
-# Mix of imported targets and old style variables
-
-depio1 = dependency('ImportedOldStyle', required : true, cmake_module_path : 'cmake')
-
-# Try to actually link with depio1, since we are doing even more "fun" stuff there
-exe4 = executable('zlibprog4', 'prog.c', dependencies : depio1)
-test('zlibtest4', exe4)
-
 # Test some edge cases with spaces, etc. (but only for CMake >= 3.15)
 
-if find_program('cmake', required: false, version: '>=3.15').found()
+if cm_vers.version_compare('>=3.15')
   testDep1 = dependency('ImportedTarget', required : true, method : 'cmake', cmake_module_path : 'cmake', modules: 'mesonTestLibDefs')
   testDep2 = dependency('ImportedTarget', required : true, method : 'cmake', cmake_module_path : 'cmake', modules : ['MesonTest::TestLibDefs'])
   testFlagSet1 = executable('testFlagSet1', ['testFlagSet.c'], dependencies: [testDep1])
@@ -79,7 +73,7 @@ endif
 # test.json sets CMAKE_PREFIX_PATH to include ./cmake_pref_env/
 verdep1 = dependency('cmMesonVersionedTestDep', required : true, method : 'cmake', cmake_package_version : '3.0')
 verdep2 = dependency('cmMesonVersionedTestDep', required : false, method : 'cmake', cmake_package_version : '200.0')
-assert(not verdep2.found(), 'found a version dep we shouldn\'t have')
+assert(not verdep2.found(), 'found a version dep we shouldnt have')
 
 # Try to compile a test that takes a dep and an include_directories
 

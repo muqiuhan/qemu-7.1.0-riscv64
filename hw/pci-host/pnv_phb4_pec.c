@@ -115,7 +115,8 @@ static void pnv_pec_default_phb_realize(PnvPhb4PecState *pec,
                                         int stack_no,
                                         Error **errp)
 {
-    PnvPHB *phb = PNV_PHB(qdev_new(TYPE_PNV_PHB));
+    PnvPhb4PecClass *pecc = PNV_PHB4_PEC_GET_CLASS(pec);
+    PnvPHB4 *phb = PNV_PHB4(qdev_new(pecc->phb_type));
     int phb_id = pnv_phb4_pec_get_phb_id(pec, stack_no);
 
     object_property_add_child(OBJECT(pec), "phb[*]", OBJECT(phb));
@@ -146,10 +147,8 @@ static void pnv_pec_realize(DeviceState *dev, Error **errp)
     pec->num_phbs = pecc->num_phbs[pec->index];
 
     /* Create PHBs if running with defaults */
-    if (defaults_enabled()) {
-        for (i = 0; i < pec->num_phbs; i++) {
-            pnv_pec_default_phb_realize(pec, i, errp);
-        }
+    for (i = 0; i < pec->num_phbs; i++) {
+        pnv_pec_default_phb_realize(pec, i, errp);
     }
 
     /* Initialize the XSCOM regions for the PEC registers */
@@ -262,6 +261,7 @@ static void pnv_pec_class_init(ObjectClass *klass, void *data)
     pecc->version = PNV_PHB4_VERSION;
     pecc->phb_type = TYPE_PNV_PHB4;
     pecc->num_phbs = pnv_pec_num_phbs;
+    pecc->rp_model = TYPE_PNV_PHB4_ROOT_PORT;
 }
 
 static const TypeInfo pnv_pec_type_info = {
@@ -314,6 +314,7 @@ static void pnv_phb5_pec_class_init(ObjectClass *klass, void *data)
     pecc->version = PNV_PHB5_VERSION;
     pecc->phb_type = TYPE_PNV_PHB5;
     pecc->num_phbs = pnv_phb5_pec_num_stacks;
+    pecc->rp_model = TYPE_PNV_PHB5_ROOT_PORT;
 }
 
 static const TypeInfo pnv_phb5_pec_type_info = {

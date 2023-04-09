@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from .base import DependencyTypeName, ExternalDependency, DependencyException
+from .base import DependencyTypeName, ExternalDependency, DependencyException, DependencyMethods
 from ..mesonlib import MesonException, Version, stringlistify
 from .. import mlog
 from pathlib import Path
@@ -111,6 +111,10 @@ class ExtraFrameworkDependency(ExternalDependency):
             if trial.is_dir():
                 return trial.as_posix()
         return None
+
+    @staticmethod
+    def get_methods() -> T.List[DependencyMethods]:
+        return [DependencyMethods.EXTRAFRAMEWORK]
 
     def log_info(self) -> str:
         return self.framework_path or ''

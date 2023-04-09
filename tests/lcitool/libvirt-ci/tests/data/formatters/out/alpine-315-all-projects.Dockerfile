@@ -15,7 +15,6 @@ RUN apk update && \
         bash-completion \
         bc \
         bison \
-        busybox \
         bzip2 \
         bzip2-dev \
         ca-certificates \
@@ -34,9 +33,7 @@ RUN apk update && \
         dbus \
         diffutils \
         dtc-dev \
-        e2fsprogs \
         eudev-dev \
-        expect \
         findutils \
         flex \
         fuse-dev \
@@ -97,7 +94,6 @@ RUN apk update && \
         libtasn1-dev \
         libtirpc-dev \
         libtool \
-        libtorrent \
         liburing-dev \
         libusb-dev \
         libvirt-dev \
@@ -109,7 +105,6 @@ RUN apk update && \
         linux-pam-dev \
         llvm11 \
         lttng-ust-dev \
-        lua5.4 \
         lvm2 \
         lvm2-dev \
         lzo-dev \
@@ -140,7 +135,6 @@ RUN apk update && \
         pcre-dev \
         perl \
         perl-app-cpanminus \
-        perl-dev \
         perl-file-slurp \
         perl-io-string \
         perl-module-build \
@@ -175,7 +169,6 @@ RUN apk update && \
         py3-setuptools \
         py3-sphinx \
         py3-sphinx_rtd_theme \
-        py3-wheel \
         py3-yaml \
         python3 \
         python3-dev \
@@ -191,15 +184,12 @@ RUN apk update && \
         sdl2-dev \
         sdl2_image-dev \
         sed \
-        sfdisk \
         snappy-dev \
-        socat \
         sparse \
         spice-dev \
         spice-gtk-dev \
         spice-protocol \
         tar \
-        tcl \
         tcpdump \
         tesseract-ocr \
         texinfo \
@@ -223,7 +213,6 @@ RUN apk update && \
         zip \
         zlib-dev \
         zlib-static \
-        zstd \
         zstd-dev && \
     apk list | sort > /packages.txt && \
     mkdir -p /usr/libexec/ccache-wrappers && \
@@ -232,8 +221,6 @@ RUN apk update && \
     ln -s /usr/bin/ccache /usr/libexec/ccache-wrappers/clang && \
     ln -s /usr/bin/ccache /usr/libexec/ccache-wrappers/g++ && \
     ln -s /usr/bin/ccache /usr/libexec/ccache-wrappers/gcc
-
-RUN /usr/bin/pip3 install boto3
 
 RUN cpanm --notest \
           Archive::Tar \
@@ -251,8 +238,8 @@ RUN cpanm --notest \
           Test::Simple \
           accessors
 
-ENV CCACHE_WRAPPERSDIR "/usr/libexec/ccache-wrappers"
 ENV LANG "en_US.UTF-8"
 ENV MAKE "/usr/bin/make"
 ENV NINJA "/usr/bin/ninja"
 ENV PYTHON "/usr/bin/python3"
+ENV CCACHE_WRAPPERSDIR "/usr/libexec/ccache-wrappers"

@@ -13,11 +13,7 @@
 
 #include "libqtest.h"
 
-#ifndef _WIN32
 QTestState *global_qtest __attribute__((common, weak));
-#else
-__declspec(selectany) QTestState *global_qtest;
-#endif
 
 /**
  * qtest_start:

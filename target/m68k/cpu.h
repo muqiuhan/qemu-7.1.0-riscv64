@@ -154,7 +154,7 @@ typedef struct CPUArchState {
     struct {} end_reset_fields;
 
     /* Fields from here on are preserved across CPU reset. */
-    uint64_t features;
+    uint32_t features;
 } CPUM68KState;
 
 /*
@@ -480,9 +480,8 @@ void do_m68k_semihosting(CPUM68KState *env, int nr);
  */
 
 enum m68k_features {
-    /* Base Motorola CPU set (not set for Coldfire CPUs) */
-    M68K_FEATURE_M68K,
-    /* Motorola CPU feature sets */
+    /* Base m68k instruction set */
+    M68K_FEATURE_M68000,
     M68K_FEATURE_M68010,
     M68K_FEATURE_M68020,
     M68K_FEATURE_M68030,
@@ -537,13 +536,11 @@ enum m68k_features {
     M68K_FEATURE_UNALIGNED_DATA,
     /* TRAPcc insn. (680[2346]0, and CPU32) */
     M68K_FEATURE_TRAPCC,
-    /* MOVE from SR privileged (from 68010) */
-    M68K_FEATURE_MOVEFROMSR_PRIV,
 };
 
-static inline bool m68k_feature(CPUM68KState *env, int feature)
+static inline int m68k_feature(CPUM68KState *env, int feature)
 {
-    return (env->features & BIT_ULL(feature)) != 0;
+    return (env->features & (1u << feature)) != 0;
 }
 
 void m68k_cpu_list(void);

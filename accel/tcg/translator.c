@@ -42,27 +42,30 @@ bool translator_use_goto_tb(DisasContextBase *db, target_ulong dest)
     return ((db->pc_first ^ dest) & TARGET_PAGE_MASK) == 0;
 }
 
-void translator_loop(CPUState *cpu, TranslationBlock *tb, int max_insns,
-                     target_ulong pc, void *host_pc,
-                     const TranslatorOps *ops, DisasContextBase *db)
+static inline void translator_page_protect(DisasContextBase *dcbase,
+                                           target_ulong pc)
+{
+#ifdef CONFIG_USER_ONLY
+    dcbase->page_protect_end = pc | ~TARGET_PAGE_MASK;
+    page_protect(pc);
+#endif
+}
+
+void translator_loop(const TranslatorOps *ops, DisasContextBase *db,
+                     CPUState *cpu, TranslationBlock *tb, int max_insns)
 {
     uint32_t cflags = tb_cflags(tb);
     bool plugin_enabled;
 
     /* Initialize DisasContext */
     db->tb = tb;
-    db->pc_first = pc;
-    db->pc_next = pc;
+    db->pc_first = tb->pc;
+    db->pc_next = db->pc_first;
     db->is_jmp = DISAS_NEXT;
     db->num_insns = 0;
     db->max_insns = max_insns;
     db->singlestep_enabled = cflags & CF_SINGLE_STEP;
-    db->host_addr[0] = host_pc;
-    db->host_addr[1] = NULL;
-
-#ifdef CONFIG_USER_ONLY
-    page_protect(pc);
-#endif
+    translator_page_protect(db, db->pc_next);
 
     ops->init_disas_context(db, cpu);
     tcg_debug_assert(db->is_jmp == DISAS_NEXT);  /* no early exit */
@@ -75,7 +78,7 @@ void translator_loop(CPUState *cpu, TranslationBlock *tb, int max_insns,
     ops->tb_start(db, cpu);
     tcg_debug_assert(db->is_jmp == DISAS_NEXT);  /* no early exit */
 
-    plugin_enabled = plugin_gen_tb_start(cpu, db, cflags & CF_MEMI_ONLY);
+    plugin_enabled = plugin_gen_tb_start(cpu, tb, cflags & CF_MEMI_ONLY);
 
     while (true) {
         db->num_insns++;
@@ -147,104 +150,31 @@ void translator_loop(CPUState *cpu, TranslationBlock *tb, int max_insns,
 #endif
 }
 
-static void *translator_access(CPUArchState *env, DisasContextBase *db,
-                               target_ulong pc, size_t len)
+static inline void translator_maybe_page_protect(DisasContextBase *dcbase,
+                                                 target_ulong pc, size_t len)
 {
-    void *host;
-    target_ulong base, end;
-    TranslationBlock *tb;
-
-    tb = db->tb;
-
-    /* Use slow path if first page is MMIO. */
-    if (unlikely(tb_page_addr0(tb) == -1)) {
-        return NULL;
-    }
-
-    end = pc + len - 1;
-    if (likely(is_same_page(db, end))) {
-        host = db->host_addr[0];
-        base = db->pc_first;
-    } else {
-        host = db->host_addr[1];
-        base = TARGET_PAGE_ALIGN(db->pc_first);
-        if (host == NULL) {
-            tb_page_addr_t phys_page =
-                get_page_addr_code_hostp(env, base, &db->host_addr[1]);
-            /* We cannot handle MMIO as second page. */
-            assert(phys_page != -1);
-            tb_set_page_addr1(tb, phys_page);
 #ifdef CONFIG_USER_ONLY
-            page_protect(end);
+    target_ulong end = pc + len - 1;
+
+    if (end > dcbase->page_protect_end) {
+        translator_page_protect(dcbase, end);
+    }
 #endif
-            host = db->host_addr[1];
-        }
-
-        /* Use slow path when crossing pages. */
-        if (is_same_page(db, pc)) {
-            return NULL;
-        }
-    }
-
-    tcg_debug_assert(pc >= base);
-    return host + (pc - base);
 }
 
-uint8_t translator_ldub(CPUArchState *env, DisasContextBase *db, abi_ptr pc)
-{
-    uint8_t ret;
-    void *p = translator_access(env, db, pc, sizeof(ret));
-
-    if (p) {
-        plugin_insn_append(pc, p, sizeof(ret));
-        return ldub_p(p);
+#define GEN_TRANSLATOR_LD(fullname, type, load_fn, swap_fn)             \
+    type fullname ## _swap(CPUArchState *env, DisasContextBase *dcbase, \
+                           abi_ptr pc, bool do_swap)                    \
+    {                                                                   \
+        translator_maybe_page_protect(dcbase, pc, sizeof(type));        \
+        type ret = load_fn(env, pc);                                    \
+        if (do_swap) {                                                  \
+            ret = swap_fn(ret);                                         \
+        }                                                               \
+        plugin_insn_append(pc, &ret, sizeof(ret));                      \
+        return ret;                                                     \
     }
-    ret = cpu_ldub_code(env, pc);
-    plugin_insn_append(pc, &ret, sizeof(ret));
-    return ret;
-}
 
-uint16_t translator_lduw(CPUArchState *env, DisasContextBase *db, abi_ptr pc)
-{
-    uint16_t ret, plug;
-    void *p = translator_access(env, db, pc, sizeof(ret));
+FOR_EACH_TRANSLATOR_LD(GEN_TRANSLATOR_LD)
 
-    if (p) {
-        plugin_insn_append(pc, p, sizeof(ret));
-        return lduw_p(p);
-    }
-    ret = cpu_lduw_code(env, pc);
-    plug = tswap16(ret);
-    plugin_insn_append(pc, &plug, sizeof(ret));
-    return ret;
-}
-
-uint32_t translator_ldl(CPUArchState *env, DisasContextBase *db, abi_ptr pc)
-{
-    uint32_t ret, plug;
-    void *p = translator_access(env, db, pc, sizeof(ret));
-
-    if (p) {
-        plugin_insn_append(pc, p, sizeof(ret));
-        return ldl_p(p);
-    }
-    ret = cpu_ldl_code(env, pc);
-    plug = tswap32(ret);
-    plugin_insn_append(pc, &plug, sizeof(ret));
-    return ret;
-}
-
-uint64_t translator_ldq(CPUArchState *env, DisasContextBase *db, abi_ptr pc)
-{
-    uint64_t ret, plug;
-    void *p = translator_access(env, db, pc, sizeof(ret));
-
-    if (p) {
-        plugin_insn_append(pc, p, sizeof(ret));
-        return ldq_p(p);
-    }
-    ret = cpu_ldq_code(env, pc);
-    plug = tswap64(ret);
-    plugin_insn_append(pc, &plug, sizeof(ret));
-    return ret;
-}
+#undef GEN_TRANSLATOR_LD

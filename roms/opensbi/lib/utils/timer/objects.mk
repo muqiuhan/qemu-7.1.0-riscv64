@@ -8,9 +8,5 @@
 #
 
 libsbiutils-objs-y += timer/aclint_mtimer.o
-
 libsbiutils-objs-y += timer/fdt_timer.o
-libsbiutils-objs-y += timer/fdt_timer_drivers.o
-
-carray-fdt_timer_drivers-y += fdt_timer_mtimer
 libsbiutils-objs-y += timer/fdt_timer_mtimer.o

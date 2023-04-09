@@ -8,9 +8,6 @@ config PL061
 config GPIO_KEY
     bool
 
-config GPIO_MPC8XXX
-    bool
-
 config GPIO_PWR
     bool
 

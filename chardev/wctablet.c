@@ -319,9 +319,7 @@ static void wctablet_chr_finalize(Object *obj)
 {
     TabletChardev *tablet = WCTABLET_CHARDEV(obj);
 
-    if (tablet->hs) {
-        qemu_input_handler_unregister(tablet->hs);
-    }
+    qemu_input_handler_unregister(tablet->hs);
 }
 
 static void wctablet_chr_open(Chardev *chr,

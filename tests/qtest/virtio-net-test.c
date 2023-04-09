@@ -165,6 +165,8 @@ static void stop_cont_test(void *obj, void *data, QGuestAllocator *t_alloc)
     rx_stop_cont_test(dev, t_alloc, rx, sv[0]);
 }
 
+#endif
+
 static void hotplug(void *obj, void *data, QGuestAllocator *t_alloc)
 {
     QVirtioPCIDevice *dev = obj;
@@ -284,8 +286,6 @@ static void *virtio_net_test_setup(GString *cmd_line, void *arg)
     return sv;
 }
 
-#endif /* _WIN32 */
-
 static void large_tx(void *obj, void *data, QGuestAllocator *t_alloc)
 {
     QVirtioNet *dev = obj;
@@ -319,15 +319,16 @@ static void *virtio_net_test_setup_nosocket(GString *cmd_line, void *arg)
 
 static void register_virtio_net_test(void)
 {
-    QOSGraphTestOptions opts = { 0 };
+    QOSGraphTestOptions opts = {
+        .before = virtio_net_test_setup,
+    };
 
-#ifndef _WIN32
-    opts.before = virtio_net_test_setup;
     qos_add_test("hotplug", "virtio-net-pci", hotplug, &opts);
+#ifndef _WIN32
     qos_add_test("basic", "virtio-net", send_recv_test, &opts);
     qos_add_test("rx_stop_cont", "virtio-net", stop_cont_test, &opts);
-    qos_add_test("announce-self", "virtio-net", announce_self, &opts);
 #endif
+    qos_add_test("announce-self", "virtio-net", announce_self, &opts);
 
     /* These tests do not need a loopback backend.  */
     opts.before = virtio_net_test_setup_nosocket;

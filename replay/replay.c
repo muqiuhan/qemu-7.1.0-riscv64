@@ -366,8 +366,10 @@ void replay_finish(void)
         fclose(replay_file);
         replay_file = NULL;
     }
-    g_free(replay_filename);
-    replay_filename = NULL;
+    if (replay_filename) {
+        g_free(replay_filename);
+        replay_filename = NULL;
+    }
 
     g_free(replay_snapshot);
     replay_snapshot = NULL;

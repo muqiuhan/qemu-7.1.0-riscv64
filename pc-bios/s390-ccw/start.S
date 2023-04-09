@@ -19,7 +19,7 @@ _start:
 	larl %r2, __bss_start
 	larl %r3, _end
 	slgr %r3, %r2		/* get sizeof bss */
-	ltgr	%r3,%r3 	/* bss empty? */
+	ltgr	%r3,%r3 	/* bss emtpy? */
 	jz	done
 	aghi	%r3,-1
 	srlg	%r4,%r3,8	/* how many 256 byte chunks? */

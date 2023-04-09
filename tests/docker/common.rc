@@ -63,12 +63,12 @@ check_qemu()
 {
     # default to make check unless the caller specifies
     if [ $# = 0 ]; then
-        INVOCATION="${TEST_COMMAND:-make $MAKEFLAGS check}"
+        INVOCATION="check"
     else
-        INVOCATION="make $MAKEFLAGS $@"
+        INVOCATION="$@"
     fi
 
-    $INVOCATION
+    make $MAKEFLAGS $INVOCATION
 }
 
 test_fail()

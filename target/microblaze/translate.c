@@ -1849,11 +1849,10 @@ static const TranslatorOps mb_tr_ops = {
     .disas_log          = mb_tr_disas_log,
 };
 
-void gen_intermediate_code(CPUState *cpu, TranslationBlock *tb, int max_insns,
-                           target_ulong pc, void *host_pc)
+void gen_intermediate_code(CPUState *cpu, TranslationBlock *tb, int max_insns)
 {
     DisasContext dc;
-    translator_loop(cpu, tb, max_insns, pc, host_pc, &mb_tr_ops, &dc.base);
+    translator_loop(&mb_tr_ops, &dc.base, cpu, tb, max_insns);
 }
 
 void mb_cpu_dump_state(CPUState *cs, FILE *f, int flags)
@@ -1945,4 +1944,11 @@ void mb_tcg_init(void)
 
     cpu_res_addr =
         tcg_global_mem_new(cpu_env, offsetof(CPUMBState, res_addr), "res_addr");
+}
+
+void restore_state_to_opc(CPUMBState *env, TranslationBlock *tb,
+                          target_ulong *data)
+{
+    env->pc = data[0];
+    env->iflags = data[1];
 }

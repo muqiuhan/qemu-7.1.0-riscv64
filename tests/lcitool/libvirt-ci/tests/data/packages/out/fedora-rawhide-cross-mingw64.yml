@@ -1,5 +1,4 @@
 cross:
-- mingw32-nsis
 - mingw64-SDL2
 - mingw64-SDL2_image
 - mingw64-bzip2
@@ -62,9 +61,7 @@ native:
 - diffutils
 - dnsmasq
 - dwarves
-- e2fsprogs
 - ebtables
-- expect
 - findutils
 - firewalld-filesystem
 - flex
@@ -98,15 +95,11 @@ native:
 - junit
 - kmod
 - libcmpiutil-devel
-- libnbd-devel
 - libtool
-- libtorrent-devel
 - libxml2
 - libxslt
-- libzstd-devel
 - llvm
 - lsof
-- lua-devel
 - lvm2
 - make
 - meson
@@ -133,7 +126,6 @@ native:
 - perl-Digest
 - perl-Digest-MD5
 - perl-ExtUtils-CBuilder
-- perl-ExtUtils-Embed
 - perl-File-Slurp
 - perl-IO-Compress-Bzip2
 - perl-IO-Interface
@@ -169,13 +161,11 @@ native:
 - polkit
 - python3
 - python3-PyYAML
-- python3-boto3
 - python3-dbus
 - python3-devel
 - python3-docutils
 - python3-flake8
 - python3-gobject
-- python3-libnbd
 - python3-libselinux
 - python3-libxml2
 - python3-lxml
@@ -200,14 +190,12 @@ native:
 - screen
 - scrub
 - sed
-- socat
+- sheepdog
 - sparse
 - spice-protocol
 - strace
 - sudo
-- systemd-rpm-macros
 - tar
-- tcl-devel
 - tcpdump
 - tesseract
 - tesseract-langpack-eng
@@ -219,6 +207,5 @@ native:
 - vim-minimal
 - wget
 - which
-- xorriso
 - xz
 - zip

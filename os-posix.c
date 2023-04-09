@@ -39,7 +39,6 @@
 
 #ifdef CONFIG_LINUX
 #include <sys/prctl.h>
-#include "qemu/async-teardown.h"
 #endif
 
 /*
@@ -151,11 +150,6 @@ int os_parse_cmd_args(int index, const char *optarg)
     case QEMU_OPTION_daemonize:
         daemonize = 1;
         break;
-#if defined(CONFIG_LINUX)
-    case QEMU_OPTION_asyncteardown:
-        init_async_teardown();
-        break;
-#endif
     default:
         return -1;
     }

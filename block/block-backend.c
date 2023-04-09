@@ -134,9 +134,10 @@ static void blk_root_drained_end(BdrvChild *child, int *drained_end_counter);
 static void blk_root_change_media(BdrvChild *child, bool load);
 static void blk_root_resize(BdrvChild *child);
 
-static bool blk_root_change_aio_ctx(BdrvChild *child, AioContext *ctx,
-                                    GHashTable *visited, Transaction *tran,
-                                    Error **errp);
+static bool blk_root_can_set_aio_ctx(BdrvChild *child, AioContext *ctx,
+                                     GSList **ignore, Error **errp);
+static void blk_root_set_aio_ctx(BdrvChild *child, AioContext *ctx,
+                                 GSList **ignore);
 
 static char *blk_root_get_parent_desc(BdrvChild *child)
 {
@@ -311,7 +312,6 @@ static void blk_root_detach(BdrvChild *child)
 static AioContext *blk_root_get_parent_aio_context(BdrvChild *c)
 {
     BlockBackend *blk = c->opaque;
-    IO_CODE();
 
     return blk_get_aio_context(blk);
 }
@@ -334,7 +334,8 @@ static const BdrvChildClass child_root = {
     .attach             = blk_root_attach,
     .detach             = blk_root_detach,
 
-    .change_aio_ctx     = blk_root_change_aio_ctx,
+    .can_set_aio_ctx    = blk_root_can_set_aio_ctx,
+    .set_aio_ctx        = blk_root_set_aio_ctx,
 
     .get_parent_aio_context = blk_root_get_parent_aio_context,
 };
@@ -1545,7 +1546,7 @@ static BlockAIOCB *blk_aio_prwv(BlockBackend *blk, int64_t offset,
     return &acb->common;
 }
 
-static void coroutine_fn blk_aio_read_entry(void *opaque)
+static void blk_aio_read_entry(void *opaque)
 {
     BlkAioEmAIOCB *acb = opaque;
     BlkRwCo *rwco = &acb->rwco;
@@ -1557,7 +1558,7 @@ static void coroutine_fn blk_aio_read_entry(void *opaque)
     blk_aio_complete(acb);
 }
 
-static void coroutine_fn blk_aio_write_entry(void *opaque)
+static void blk_aio_write_entry(void *opaque)
 {
     BlkAioEmAIOCB *acb = opaque;
     BlkRwCo *rwco = &acb->rwco;
@@ -1668,7 +1669,7 @@ int coroutine_fn blk_co_ioctl(BlockBackend *blk, unsigned long int req,
     return ret;
 }
 
-static void coroutine_fn blk_aio_ioctl_entry(void *opaque)
+static void blk_aio_ioctl_entry(void *opaque)
 {
     BlkAioEmAIOCB *acb = opaque;
     BlkRwCo *rwco = &acb->rwco;
@@ -1702,7 +1703,7 @@ blk_co_do_pdiscard(BlockBackend *blk, int64_t offset, int64_t bytes)
     return bdrv_co_pdiscard(blk->root, offset, bytes);
 }
 
-static void coroutine_fn blk_aio_pdiscard_entry(void *opaque)
+static void blk_aio_pdiscard_entry(void *opaque)
 {
     BlkAioEmAIOCB *acb = opaque;
     BlkRwCo *rwco = &acb->rwco;
@@ -1746,7 +1747,7 @@ static int coroutine_fn blk_co_do_flush(BlockBackend *blk)
     return bdrv_co_flush(blk_bs(blk));
 }
 
-static void coroutine_fn blk_aio_flush_entry(void *opaque)
+static void blk_aio_flush_entry(void *opaque)
 {
     BlkAioEmAIOCB *acb = opaque;
     BlkRwCo *rwco = &acb->rwco;
@@ -1945,7 +1946,7 @@ bool blk_enable_write_cache(BlockBackend *blk)
 
 void blk_set_enable_write_cache(BlockBackend *blk, bool wce)
 {
-    IO_CODE();
+    GLOBAL_STATE_CODE();
     blk->enable_write_cache = wce;
 }
 
@@ -2148,21 +2149,13 @@ static int blk_do_set_aio_context(BlockBackend *blk, AioContext *new_context,
         bdrv_ref(bs);
 
         if (update_root_node) {
-            /*
-             * update_root_node MUST be false for blk_root_set_aio_ctx_commit(),
-             * as we are already in the commit function of a transaction.
-             */
-            ret = bdrv_try_change_aio_context(bs, new_context, blk->root, errp);
+            ret = bdrv_child_try_set_aio_context(bs, new_context, blk->root,
+                                                 errp);
             if (ret < 0) {
                 bdrv_unref(bs);
                 return ret;
             }
         }
-        /*
-         * Make blk->ctx consistent with the root node before we invoke any
-         * other operations like drain that might inquire blk->ctx
-         */
-        blk->ctx = new_context;
         if (tgm->throttle_state) {
             bdrv_drained_begin(bs);
             throttle_group_detach_aio_context(tgm);
@@ -2171,10 +2164,9 @@ static int blk_do_set_aio_context(BlockBackend *blk, AioContext *new_context,
         }
 
         bdrv_unref(bs);
-    } else {
-        blk->ctx = new_context;
     }
 
+    blk->ctx = new_context;
     return 0;
 }
 
@@ -2185,52 +2177,31 @@ int blk_set_aio_context(BlockBackend *blk, AioContext *new_context,
     return blk_do_set_aio_context(blk, new_context, true, errp);
 }
 
-typedef struct BdrvStateBlkRootContext {
-    AioContext *new_ctx;
-    BlockBackend *blk;
-} BdrvStateBlkRootContext;
-
-static void blk_root_set_aio_ctx_commit(void *opaque)
-{
-    BdrvStateBlkRootContext *s = opaque;
-    BlockBackend *blk = s->blk;
-
-    blk_do_set_aio_context(blk, s->new_ctx, false, &error_abort);
-}
-
-static TransactionActionDrv set_blk_root_context = {
-    .commit = blk_root_set_aio_ctx_commit,
-    .clean = g_free,
-};
-
-static bool blk_root_change_aio_ctx(BdrvChild *child, AioContext *ctx,
-                                    GHashTable *visited, Transaction *tran,
-                                    Error **errp)
+static bool blk_root_can_set_aio_ctx(BdrvChild *child, AioContext *ctx,
+                                     GSList **ignore, Error **errp)
 {
     BlockBackend *blk = child->opaque;
-    BdrvStateBlkRootContext *s;
 
-    if (!blk->allow_aio_context_change) {
-        /*
-         * Manually created BlockBackends (those with a name) that are not
-         * attached to anything can change their AioContext without updating
-         * their user; return an error for others.
-         */
-        if (!blk->name || blk->dev) {
-            /* TODO Add BB name/QOM path */
-            error_setg(errp, "Cannot change iothread of active block backend");
-            return false;
-        }
+    if (blk->allow_aio_context_change) {
+        return true;
     }
 
-    s = g_new(BdrvStateBlkRootContext, 1);
-    *s = (BdrvStateBlkRootContext) {
-        .new_ctx = ctx,
-        .blk = blk,
-    };
+    /* Only manually created BlockBackends that are not attached to anything
+     * can change their AioContext without updating their user. */
+    if (!blk->name || blk->dev) {
+        /* TODO Add BB name/QOM path */
+        error_setg(errp, "Cannot change iothread of active block backend");
+        return false;
+    }
 
-    tran_add(tran, &set_blk_root_context, s);
     return true;
+}
+
+static void blk_root_set_aio_ctx(BdrvChild *child, AioContext *ctx,
+                                 GSList **ignore)
+{
+    BlockBackend *blk = child->opaque;
+    blk_do_set_aio_context(blk, ctx, false, &error_abort);
 }
 
 void blk_add_aio_context_notifier(BlockBackend *blk,
@@ -2574,27 +2545,16 @@ static void blk_root_drained_end(BdrvChild *child, int *drained_end_counter)
     }
 }
 
-bool blk_register_buf(BlockBackend *blk, void *host, size_t size, Error **errp)
+void blk_register_buf(BlockBackend *blk, void *host, size_t size)
 {
-    BlockDriverState *bs = blk_bs(blk);
-
     GLOBAL_STATE_CODE();
-
-    if (bs) {
-        return bdrv_register_buf(bs, host, size, errp);
-    }
-    return true;
+    bdrv_register_buf(blk_bs(blk), host, size);
 }
 
-void blk_unregister_buf(BlockBackend *blk, void *host, size_t size)
+void blk_unregister_buf(BlockBackend *blk, void *host)
 {
-    BlockDriverState *bs = blk_bs(blk);
-
     GLOBAL_STATE_CODE();
-
-    if (bs) {
-        bdrv_unregister_buf(bs, host, size);
-    }
+    bdrv_unregister_buf(blk_bs(blk), host);
 }
 
 int coroutine_fn blk_co_copy_range(BlockBackend *blk_in, int64_t off_in,

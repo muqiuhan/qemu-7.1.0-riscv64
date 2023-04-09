@@ -339,7 +339,7 @@ typedef struct {
 struct V9fsState {
     QLIST_HEAD(, V9fsPDU) free_list;
     QLIST_HEAD(, V9fsPDU) active_list;
-    GHashTable *fids;
+    QSIMPLEQ_HEAD(, V9fsFidState) fid_list;
     FileOperations *ops;
     FsContext ctx;
     char *tag;
@@ -424,24 +424,21 @@ typedef struct V9fsGetlock
 extern int open_fd_hw;
 extern int total_open_fd;
 
-static inline void coroutine_fn
-v9fs_path_write_lock(V9fsState *s)
+static inline void v9fs_path_write_lock(V9fsState *s)
 {
     if (s->ctx.export_flags & V9FS_PATHNAME_FSCONTEXT) {
         qemu_co_rwlock_wrlock(&s->rename_lock);
     }
 }
 
-static inline void coroutine_fn
-v9fs_path_read_lock(V9fsState *s)
+static inline void v9fs_path_read_lock(V9fsState *s)
 {
     if (s->ctx.export_flags & V9FS_PATHNAME_FSCONTEXT) {
         qemu_co_rwlock_rdlock(&s->rename_lock);
     }
 }
 
-static inline void coroutine_fn
-v9fs_path_unlock(V9fsState *s)
+static inline void v9fs_path_unlock(V9fsState *s)
 {
     if (s->ctx.export_flags & V9FS_PATHNAME_FSCONTEXT) {
         qemu_co_rwlock_unlock(&s->rename_lock);

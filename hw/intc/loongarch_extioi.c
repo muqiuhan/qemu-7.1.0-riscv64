@@ -68,46 +68,44 @@ static void extioi_setirq(void *opaque, int irq, int level)
     extioi_update_irq(s, irq, level);
 }
 
-static MemTxResult extioi_readw(void *opaque, hwaddr addr, uint64_t *data,
-                                unsigned size, MemTxAttrs attrs)
+static uint64_t extioi_readw(void *opaque, hwaddr addr, unsigned size)
 {
     LoongArchExtIOI *s = LOONGARCH_EXTIOI(opaque);
     unsigned long offset = addr & 0xffff;
-    uint32_t index, cpu;
+    uint32_t index, cpu, ret = 0;
 
     switch (offset) {
     case EXTIOI_NODETYPE_START ... EXTIOI_NODETYPE_END - 1:
         index = (offset - EXTIOI_NODETYPE_START) >> 2;
-        *data = s->nodetype[index];
+        ret = s->nodetype[index];
         break;
     case EXTIOI_IPMAP_START ... EXTIOI_IPMAP_END - 1:
         index = (offset - EXTIOI_IPMAP_START) >> 2;
-        *data = s->ipmap[index];
+        ret = s->ipmap[index];
         break;
     case EXTIOI_ENABLE_START ... EXTIOI_ENABLE_END - 1:
         index = (offset - EXTIOI_ENABLE_START) >> 2;
-        *data = s->enable[index];
+        ret = s->enable[index];
         break;
     case EXTIOI_BOUNCE_START ... EXTIOI_BOUNCE_END - 1:
         index = (offset - EXTIOI_BOUNCE_START) >> 2;
-        *data = s->bounce[index];
+        ret = s->bounce[index];
         break;
     case EXTIOI_COREISR_START ... EXTIOI_COREISR_END - 1:
-        index = (offset - EXTIOI_COREISR_START) >> 2;
-        /* using attrs to get current cpu index */
-        cpu = attrs.requester_id;
-        *data = s->coreisr[cpu][index];
+        index = ((offset - EXTIOI_COREISR_START) & 0x1f) >> 2;
+        cpu = ((offset - EXTIOI_COREISR_START) >> 8) & 0x3;
+        ret = s->coreisr[cpu][index];
         break;
     case EXTIOI_COREMAP_START ... EXTIOI_COREMAP_END - 1:
         index = (offset - EXTIOI_COREMAP_START) >> 2;
-        *data = s->coremap[index];
+        ret = s->coremap[index];
         break;
     default:
         break;
     }
 
-    trace_loongarch_extioi_readw(addr, *data);
-    return MEMTX_OK;
+    trace_loongarch_extioi_readw(addr, ret);
+    return ret;
 }
 
 static inline void extioi_enable_irq(LoongArchExtIOI *s, int index,\
@@ -129,9 +127,8 @@ static inline void extioi_enable_irq(LoongArchExtIOI *s, int index,\
     }
 }
 
-static MemTxResult extioi_writew(void *opaque, hwaddr addr,
-                          uint64_t val, unsigned size,
-                          MemTxAttrs attrs)
+static void extioi_writew(void *opaque, hwaddr addr,
+                          uint64_t val, unsigned size)
 {
     LoongArchExtIOI *s = LOONGARCH_EXTIOI(opaque);
     int i, cpu, index, old_data, irq;
@@ -186,9 +183,8 @@ static MemTxResult extioi_writew(void *opaque, hwaddr addr,
         s->bounce[index] = val;
         break;
     case EXTIOI_COREISR_START ... EXTIOI_COREISR_END - 1:
-        index = (offset - EXTIOI_COREISR_START) >> 2;
-        /* using attrs to get current cpu index */
-        cpu = attrs.requester_id;
+        index = ((offset - EXTIOI_COREISR_START) & 0x1f) >> 2;
+        cpu = ((offset - EXTIOI_COREISR_START) >> 8) & 0x3;
         old_data = s->coreisr[cpu][index];
         s->coreisr[cpu][index] = old_data & ~val;
         /* write 1 to clear interrrupt */
@@ -235,12 +231,11 @@ static MemTxResult extioi_writew(void *opaque, hwaddr addr,
     default:
         break;
     }
-    return MEMTX_OK;
 }
 
 static const MemoryRegionOps extioi_ops = {
-    .read_with_attrs = extioi_readw,
-    .write_with_attrs = extioi_writew,
+    .read = extioi_readw,
+    .write = extioi_writew,
     .impl.min_access_size = 4,
     .impl.max_access_size = 4,
     .valid.min_access_size = 4,

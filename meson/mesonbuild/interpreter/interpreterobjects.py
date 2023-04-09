@@ -14,13 +14,12 @@ from .. import mlog
 from ..modules import ModuleReturnValue, ModuleObject, ModuleState, ExtensionModule
 from ..backend.backends import TestProtocol
 from ..interpreterbase import (
-                               ContainerTypeInfo, KwargInfo, MesonOperator,
+                               ContainerTypeInfo, KwargInfo,
                                InterpreterObject, MesonInterpreterObject, ObjectHolder, MutableInterpreterObject,
                                FeatureCheckBase, FeatureNewKwargs, FeatureNew, FeatureDeprecated,
-                               typed_pos_args, typed_kwargs, typed_operator, permittedKwargs,
-                               noArgsFlattening, noPosargs, noKwargs, unholder_return, TYPE_var, TYPE_kwargs, TYPE_nvar, TYPE_nkwargs,
+                               typed_pos_args, typed_kwargs, stringArgs, permittedKwargs,
+                               noArgsFlattening, noPosargs, noKwargs, permissive_unholder_return, TYPE_var, TYPE_kwargs, TYPE_nvar, TYPE_nkwargs,
                                flatten, resolve_second_level_holders, InterpreterException, InvalidArguments, InvalidCode)
-from ..interpreter.type_checking import NoneType
 from ..dependencies import Dependency, ExternalLibrary, InternalDependency
 from ..programs import ExternalProgram
 from ..mesonlib import HoldableObject, MesonException, OptionKey, listify, Popen_safe
@@ -30,13 +29,8 @@ import typing as T
 if T.TYPE_CHECKING:
     from . import kwargs
     from .interpreter import Interpreter
+    from ..environment import Environment
     from ..envconfig import MachineInfo
-
-    from typing_extensions import TypedDict
-
-    class EnvironmentSeparatorKW(TypedDict):
-
-        separator: str
 
 
 def extract_required_kwarg(kwargs: 'kwargs.ExtractRequired',
@@ -68,7 +62,7 @@ def extract_required_kwarg(kwargs: 'kwargs.ExtractRequired',
 
     return disabled, required, feature
 
-def extract_search_dirs(kwargs: 'kwargs.ExtractSearchDirs') -> T.List[str]:
+def extract_search_dirs(kwargs: T.Dict[str, T.Any]) -> T.List[str]:
     search_dirs_str = mesonlib.stringlistify(kwargs.get('dirs', []))
     search_dirs = [Path(d).expanduser() for d in search_dirs_str]
     for d in search_dirs:
@@ -85,8 +79,7 @@ class FeatureOptionHolder(ObjectHolder[coredata.UserFeatureOption]):
         super().__init__(option, interpreter)
         if option and option.is_auto():
             # TODO: we need to case here because options is not a TypedDict
-            auto = T.cast(coredata.UserFeatureOption, self.env.coredata.options[OptionKey('auto_features')])
-            self.held_object = copy.copy(auto)
+            self.held_object = T.cast(coredata.UserFeatureOption, self.env.coredata.options[OptionKey('auto_features')])
             self.held_object.name = option.name
         self.methods.update({'enabled': self.enabled_method,
                              'disabled': self.disabled_method,
@@ -117,20 +110,18 @@ class FeatureOptionHolder(ObjectHolder[coredata.UserFeatureOption]):
 
     @noPosargs
     @noKwargs
-    @FeatureNew('feature_option.allowed()', '0.59.0')
     def allowed_method(self, args: T.List[TYPE_var], kwargs: TYPE_kwargs) -> bool:
-        return self.value != 'disabled'
+        return not self.value == 'disabled'
 
     @noPosargs
     @noKwargs
     def auto_method(self, args: T.List[TYPE_var], kwargs: TYPE_kwargs) -> bool:
         return self.value == 'auto'
 
-    @FeatureNew('feature_option.require()', '0.59.0')
     @permittedKwargs({'error_message'})
     def require_method(self, args: T.List[TYPE_var], kwargs: TYPE_kwargs) -> coredata.UserFeatureOption:
         if len(args) != 1:
-            raise InvalidArguments(f'Expected 1 argument, got {len(args)}.')
+            raise InvalidArguments('Expected 1 argument, got %d.' % (len(args), ))
         if not isinstance(args[0], bool):
             raise InvalidArguments('boolean argument expected.')
         error_message = kwargs.pop('error_message', '')
@@ -142,16 +133,14 @@ class FeatureOptionHolder(ObjectHolder[coredata.UserFeatureOption]):
         assert isinstance(error_message, str)
         if self.value == 'enabled':
             prefix = f'Feature {self.held_object.name} cannot be enabled'
-            if error_message:
-                prefix += ': '
+            prefix = prefix + ': ' if error_message else ''
             raise InterpreterException(prefix + error_message)
         return self.as_disabled()
 
-    @FeatureNew('feature_option.disable_auto_if()', '0.59.0')
     @noKwargs
     def disable_auto_if_method(self, args: T.List[TYPE_var], kwargs: TYPE_kwargs) -> coredata.UserFeatureOption:
         if len(args) != 1:
-            raise InvalidArguments(f'Expected 1 argument, got {len(args)}.')
+            raise InvalidArguments('Expected 1 argument, got %d.' % (len(args), ))
         if not isinstance(args[0], bool):
             raise InvalidArguments('boolean argument expected.')
         return copy.deepcopy(self.held_object) if self.value != 'auto' or not args[0] else self.as_disabled()
@@ -239,52 +228,76 @@ class RunProcess(MesonInterpreterObject):
     def stderr_method(self, args: T.List[TYPE_var], kwargs: TYPE_kwargs) -> str:
         return self.stderr
 
-
-_ENV_SEPARATOR_KW = KwargInfo('separator', str, default=os.pathsep)
-
-
-class EnvironmentVariablesHolder(ObjectHolder[build.EnvironmentVariables], MutableInterpreterObject):
-
-    def __init__(self, obj: build.EnvironmentVariables, interpreter: 'Interpreter'):
-        super().__init__(obj, interpreter)
+# TODO: Parsing the initial values should be either done directly in the
+#       `Interpreter` or in `build.EnvironmentVariables`. This way, this class
+#       can be converted into a pure object holder.
+class EnvironmentVariablesObject(MutableInterpreterObject, MesonInterpreterObject):
+    # TODO: Move the type cheking for initial_values out of this class and replace T.Any
+    def __init__(self, initial_values: T.Optional[T.Any] = None, subproject: str = ''):
+        super().__init__(subproject=subproject)
+        self.vars = build.EnvironmentVariables()
         self.methods.update({'set': self.set_method,
                              'append': self.append_method,
                              'prepend': self.prepend_method,
                              })
+        if isinstance(initial_values, dict):
+            for k, v in initial_values.items():
+                self.set_method([k, v], {})
+        elif initial_values is not None:
+            for e in mesonlib.listify(initial_values):
+                if not isinstance(e, str):
+                    raise InterpreterException('Env var definition must be a list of strings.')
+                if '=' not in e:
+                    raise InterpreterException('Env var definition must be of type key=val.')
+                (k, val) = e.split('=', 1)
+                k = k.strip()
+                val = val.strip()
+                if ' ' in k:
+                    raise InterpreterException('Env var key must not have spaces in it.')
+                self.set_method([k, val], {})
 
     def __repr__(self) -> str:
         repr_str = "<{0}: {1}>"
-        return repr_str.format(self.__class__.__name__, self.held_object.envvars)
+        return repr_str.format(self.__class__.__name__, self.vars.envvars)
 
-    def __deepcopy__(self, memo: T.Dict[str, object]) -> 'EnvironmentVariablesHolder':
-        # Avoid trying to copy the interpreter
-        return EnvironmentVariablesHolder(copy.deepcopy(self.held_object), self.interpreter)
+    def unpack_separator(self, kwargs: T.Dict[str, T.Any]) -> str:
+        separator = kwargs.get('separator', os.pathsep)
+        if not isinstance(separator, str):
+            raise InterpreterException("EnvironmentVariablesObject methods 'separator'"
+                                       " argument needs to be a string.")
+        return separator
 
     def warn_if_has_name(self, name: str) -> None:
         # Multiple append/prepend operations was not supported until 0.58.0.
-        if self.held_object.has_name(name):
+        if self.vars.has_name(name):
             m = f'Overriding previous value of environment variable {name!r} with a new one'
-            FeatureNew(m, '0.58.0', location=self.current_node).use(self.subproject)
+            FeatureNew('0.58.0', m).use(self.subproject)
 
+    @stringArgs
+    @permittedKwargs({'separator'})
     @typed_pos_args('environment.set', str, varargs=str, min_varargs=1)
-    @typed_kwargs('environment.set', _ENV_SEPARATOR_KW)
-    def set_method(self, args: T.Tuple[str, T.List[str]], kwargs: 'EnvironmentSeparatorKW') -> None:
+    def set_method(self, args: T.Tuple[str, T.List[str]], kwargs: T.Dict[str, T.Any]) -> None:
         name, values = args
-        self.held_object.set(name, values, kwargs['separator'])
+        separator = self.unpack_separator(kwargs)
+        self.vars.set(name, values, separator)
 
+    @stringArgs
+    @permittedKwargs({'separator'})
     @typed_pos_args('environment.append', str, varargs=str, min_varargs=1)
-    @typed_kwargs('environment.append', _ENV_SEPARATOR_KW)
-    def append_method(self, args: T.Tuple[str, T.List[str]], kwargs: 'EnvironmentSeparatorKW') -> None:
+    def append_method(self, args: T.Tuple[str, T.List[str]], kwargs: T.Dict[str, T.Any]) -> None:
         name, values = args
+        separator = self.unpack_separator(kwargs)
         self.warn_if_has_name(name)
-        self.held_object.append(name, values, kwargs['separator'])
+        self.vars.append(name, values, separator)
 
+    @stringArgs
+    @permittedKwargs({'separator'})
     @typed_pos_args('environment.prepend', str, varargs=str, min_varargs=1)
-    @typed_kwargs('environment.prepend', _ENV_SEPARATOR_KW)
-    def prepend_method(self, args: T.Tuple[str, T.List[str]], kwargs: 'EnvironmentSeparatorKW') -> None:
+    def prepend_method(self, args: T.Tuple[str, T.List[str]], kwargs: T.Dict[str, T.Any]) -> None:
         name, values = args
+        separator = self.unpack_separator(kwargs)
         self.warn_if_has_name(name)
-        self.held_object.prepend(name, values, kwargs['separator'])
+        self.vars.prepend(name, values, separator)
 
 
 class ConfigurationDataObject(MutableInterpreterObject, MesonInterpreterObject):
@@ -379,7 +392,7 @@ class ConfigurationDataObject(MutableInterpreterObject, MesonInterpreterObject):
             # TODO: Fix this once the deprecation is removed
             # assert isinstance(args[1], (int, str, bool))
             return T.cast(T.Union[str, int, bool], args[1])
-        raise InterpreterException(f'Entry {name} not in configuration data.')
+        raise InterpreterException('Entry %s not in configuration data.' % name)
 
     @FeatureNew('configuration_data.get_unquoted()', '0.44.0')
     def get_unquoted_method(self, args: T.List[TYPE_var], kwargs: TYPE_kwargs) -> T.Union[str, int, bool]:
@@ -394,7 +407,7 @@ class ConfigurationDataObject(MutableInterpreterObject, MesonInterpreterObject):
             assert isinstance(args[1], (str, int, bool))
             val = args[1]
         else:
-            raise InterpreterException(f'Entry {name} not in configuration data.')
+            raise InterpreterException('Entry %s not in configuration data.' % name)
         if isinstance(val, str) and val[0] == '"' and val[-1] == '"':
             return val[1:-1]
         return val
@@ -509,7 +522,7 @@ class DependencyHolder(ObjectHolder[Dependency]):
     def variable_method(self, args: T.Tuple[T.Optional[str]], kwargs: T.Dict[str, T.Any]) -> T.Union[str, T.List[str]]:
         default_varname = args[0]
         if default_varname is not None:
-            FeatureNew('Positional argument to dep.get_variable()', '0.58.0', location=self.current_node).use(self.subproject)
+            FeatureNew('0.58.0', 'Positional argument to dep.get_variable()').use(self.subproject)
             for k in ['cmake', 'pkgconfig', 'configtool', 'internal']:
                 kwargs.setdefault(k, default_varname)
         return self.held_object.get_variable(**kwargs)
@@ -645,28 +658,19 @@ class HeadersHolder(ObjectHolder[build.Headers]):
 class DataHolder(ObjectHolder[build.Data]):
     pass
 
-class SymlinkDataHolder(ObjectHolder[build.SymlinkData]):
-    pass
-
 class InstallDirHolder(ObjectHolder[build.InstallDir]):
     pass
 
 class ManHolder(ObjectHolder[build.Man]):
     pass
 
-class EmptyDirHolder(ObjectHolder[build.EmptyDir]):
-    pass
-
 class GeneratedObjectsHolder(ObjectHolder[build.ExtractedObjects]):
     pass
 
 class Test(MesonInterpreterObject):
-    def __init__(self, name: str, project: str, suite: T.List[str],
-                 exe: T.Union[ExternalProgram, build.Executable, build.CustomTarget],
+    def __init__(self, name: str, project: str, suite: T.List[str], exe: build.Executable,
                  depends: T.List[T.Union[build.CustomTarget, build.BuildTarget]],
-                 is_parallel: bool,
-                 cmd_args: T.List[T.Union[str, mesonlib.File, build.Target]],
-                 env: build.EnvironmentVariables,
+                 is_parallel: bool, cmd_args: T.List[str], env: build.EnvironmentVariables,
                  should_fail: bool, timeout: int, workdir: T.Optional[str], protocol: str,
                  priority: int):
         super().__init__()
@@ -684,7 +688,7 @@ class Test(MesonInterpreterObject):
         self.protocol = TestProtocol.from_str(protocol)
         self.priority = priority
 
-    def get_exe(self) -> T.Union[ExternalProgram, build.Executable, build.CustomTarget]:
+    def get_exe(self) -> build.Executable:
         return self.exe
 
     def get_name(self) -> str:
@@ -695,7 +699,7 @@ class NullSubprojectInterpreter(HoldableObject):
 
 # TODO: This should really be an `ObjectHolder`, but the additional stuff in this
 #       class prevents this. Thus, this class should be split into a pure
-#       `ObjectHolder` and a class specifically for storing in `Interpreter`.
+#       `ObjectHolder` and a class specifically for stroing in `Interpreter`.
 class SubprojectHolder(MesonInterpreterObject):
 
     def __init__(self, subinterpreter: T.Union['Interpreter', NullSubprojectInterpreter],
@@ -723,12 +727,12 @@ class SubprojectHolder(MesonInterpreterObject):
 
     @noKwargs
     @noArgsFlattening
-    @unholder_return
+    @permissive_unholder_return
     def get_variable_method(self, args: T.List[TYPE_var], kwargs: TYPE_kwargs) -> T.Union[TYPE_var, InterpreterObject]:
         if len(args) < 1 or len(args) > 2:
             raise InterpreterException('Get_variable takes one or two arguments.')
         if isinstance(self.held_object, NullSubprojectInterpreter):  # == not self.found()
-            raise InterpreterException(f'Subproject "{self.subdir}" disabled can\'t get_variable on it.')
+            raise InterpreterException('Subproject "%s" disabled can\'t get_variable on it.' % (self.subdir))
         varname = args[0]
         if not isinstance(varname, str):
             raise InterpreterException('Get_variable first argument must be a string.')
@@ -738,7 +742,7 @@ class SubprojectHolder(MesonInterpreterObject):
             pass
 
         if len(args) == 2:
-            return self.held_object._holderify(args[1])
+            return args[1]
 
         raise InvalidArguments(f'Requested variable "{varname}" not found.')
 
@@ -791,7 +795,6 @@ class BuildTargetHolder(ObjectHolder[_BuildTarget]):
     def __repr__(self) -> str:
         r = '<{} {}: {}>'
         h = self.held_object
-        assert isinstance(h, build.BuildTarget)
         return r.format(self.__class__.__name__, h.get_id(), h.filename)
 
     @property
@@ -833,8 +836,8 @@ class BuildTargetHolder(ObjectHolder[_BuildTarget]):
         return self.interpreter.backend.get_target_dir(self._target_object)
 
     @noKwargs
-    @typed_pos_args('extract_objects', varargs=(mesonlib.File, str, build.CustomTarget, build.CustomTargetIndex, build.GeneratedList))
-    def extract_objects_method(self, args: T.Tuple[T.List[T.Union[mesonlib.FileOrString, 'build.GeneratedTypes']]], kwargs: TYPE_nkwargs) -> build.ExtractedObjects:
+    @typed_pos_args('extract_objects', varargs=(mesonlib.File, str))
+    def extract_objects_method(self, args: T.Tuple[T.List[mesonlib.FileOrString]], kwargs: TYPE_nkwargs) -> build.ExtractedObjects:
         return self._target_object.extract_objects(args[0])
 
     @noPosargs
@@ -924,10 +927,6 @@ class CustomTargetHolder(ObjectHolder[build.CustomTarget]):
                              'to_list': self.to_list_method,
                              })
 
-        self.operators.update({
-            MesonOperator.INDEX: self.op_index,
-        })
-
     def __repr__(self) -> str:
         r = '<{} {}: {}>'
         h = self.held_object
@@ -947,13 +946,14 @@ class CustomTargetHolder(ObjectHolder[build.CustomTarget]):
             result.append(i)
         return result
 
-    @noKwargs
-    @typed_operator(MesonOperator.INDEX, int)
-    def op_index(self, other: int) -> build.CustomTargetIndex:
-        try:
-            return self.held_object[other]
-        except IndexError:
-            raise InvalidArguments(f'Index {other} out of bounds of custom target {self.held_object.name} output of size {len(self.held_object)}.')
+    def __getitem__(self, index: int) -> build.CustomTargetIndex:
+        return self.held_object[index]
+
+    def __setitem__(self, index: int, value: T.Any) -> None:  # lgtm[py/unexpected-raise-in-special-method]
+        raise InterpreterException('Cannot set a member of a CustomTarget')
+
+    def __delitem__(self, index: int) -> None:  # lgtm[py/unexpected-raise-in-special-method]
+        raise InterpreterException('Cannot delete a member of a CustomTarget')
 
 class RunTargetHolder(ObjectHolder[build.RunTarget]):
     pass
@@ -972,11 +972,11 @@ class GeneratorHolder(ObjectHolder[build.Generator]):
     @typed_pos_args('generator.process', min_varargs=1, varargs=(str, mesonlib.File, build.CustomTarget, build.CustomTargetIndex, build.GeneratedList))
     @typed_kwargs(
         'generator.process',
-        KwargInfo('preserve_path_from', (str, NoneType), since='0.45.0'),
+        KwargInfo('preserve_path_from', str, since='0.45.0'),
         KwargInfo('extra_args', ContainerTypeInfo(list, str), listify=True, default=[]),
     )
     def process_method(self,
-                       args: T.Tuple[T.List[T.Union[str, mesonlib.File, 'build.GeneratedTypes']]],
+                       args: T.Tuple[T.List[T.Union[str, mesonlib.File, build.CustomTarget, build.CustomTargetIndex, build.GeneratedList]]],
                        kwargs: 'kwargs.GeneratorProcess') -> build.GeneratedList:
         preserve_path_from = kwargs['preserve_path_from']
         if preserve_path_from is not None:
@@ -987,7 +987,7 @@ class GeneratorHolder(ObjectHolder[build.Generator]):
 
         if any(isinstance(a, (build.CustomTarget, build.CustomTargetIndex, build.GeneratedList)) for a in args[0]):
             FeatureNew.single_use(
-                'Calling generator.process with CustomTarget or Index of CustomTarget.',
+                f'Calling generator.process with CustomTaget or Index of CustomTarget.',
                 '0.57.0', self.interpreter.subproject)
 
         gl = self.held_object.process_files(args[0], self.interpreter,

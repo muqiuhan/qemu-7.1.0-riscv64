@@ -104,13 +104,6 @@ class CommandLine:
             help="print what files would be generated",
         )
 
-        verbosityopt = argparse.ArgumentParser(add_help=False)
-        verbosityopt.add_argument(
-            "-v", "--verbose",
-            action="count",
-            help="make Ansible more verbose (repeat for even more output)",
-        )
-
         quietopt = argparse.ArgumentParser(add_help=False)
         quietopt.add_argument(
             "-q", "--quiet",
@@ -168,14 +161,14 @@ class CommandLine:
         updateparser = subparsers.add_parser(
             "update",
             help="prepare hosts and keep them updated",
-            parents=[verbosityopt, hostsopt, projectsopt, gitrevopt],
+            parents=[hostsopt, projectsopt, gitrevopt],
         )
         updateparser.set_defaults(func=Application._action_update)
 
         buildparser = subparsers.add_parser(
             "build",
             help="build projects on hosts",
-            parents=[verbosityopt, hostsopt, gitrevopt],
+            parents=[hostsopt, gitrevopt],
         )
         buildparser.add_argument(
             "projects",
@@ -216,13 +209,6 @@ class CommandLine:
                      baseopt, layersopt],
         )
         dockerfileparser.set_defaults(func=Application._action_dockerfile)
-
-        buildenvscriptparser = subparsers.add_parser(
-            "buildenvscript",
-            help="generate shell script for build environment setup",
-            parents=[targetopt, projectsopt, crossarchopt],
-        )
-        buildenvscriptparser.set_defaults(func=Application._action_buildenvscript)
 
         manifestparser = subparsers.add_parser(
             "manifest",

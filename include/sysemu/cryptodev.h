@@ -113,7 +113,6 @@ typedef struct CryptoDevBackendSessionInfo {
         CryptoDevBackendSymSessionInfo sym_sess_info;
         CryptoDevBackendAsymSessionInfo asym_sess_info;
     } u;
-    uint64_t session_id;
 } CryptoDevBackendSessionInfo;
 
 /**
@@ -189,37 +188,27 @@ typedef struct CryptoDevBackendOpInfo {
     } u;
 } CryptoDevBackendOpInfo;
 
-typedef void (*CryptoDevCompletionFunc) (void *opaque, int ret);
 struct CryptoDevBackendClass {
     ObjectClass parent_class;
 
     void (*init)(CryptoDevBackend *backend, Error **errp);
     void (*cleanup)(CryptoDevBackend *backend, Error **errp);
 
-    int (*create_session)(CryptoDevBackend *backend,
-                          CryptoDevBackendSessionInfo *sess_info,
-                          uint32_t queue_index,
-                          CryptoDevCompletionFunc cb,
-                          void *opaque);
-
+    int64_t (*create_session)(CryptoDevBackend *backend,
+                       CryptoDevBackendSessionInfo *sess_info,
+                       uint32_t queue_index, Error **errp);
     int (*close_session)(CryptoDevBackend *backend,
-                         uint64_t session_id,
-                         uint32_t queue_index,
-                         CryptoDevCompletionFunc cb,
-                         void *opaque);
-
+                           uint64_t session_id,
+                           uint32_t queue_index, Error **errp);
     int (*do_op)(CryptoDevBackend *backend,
-                 CryptoDevBackendOpInfo *op_info,
-                 uint32_t queue_index,
-                 CryptoDevCompletionFunc cb,
-                 void *opaque);
+                     CryptoDevBackendOpInfo *op_info,
+                     uint32_t queue_index, Error **errp);
 };
 
 typedef enum CryptoDevBackendOptionsType {
     CRYPTODEV_BACKEND_TYPE_NONE = 0,
     CRYPTODEV_BACKEND_TYPE_BUILTIN = 1,
     CRYPTODEV_BACKEND_TYPE_VHOST_USER = 2,
-    CRYPTODEV_BACKEND_TYPE_LKCF = 3,
     CRYPTODEV_BACKEND_TYPE__MAX,
 } CryptoDevBackendOptionsType;
 
@@ -314,20 +303,15 @@ void cryptodev_backend_cleanup(
  * @sess_info: parameters needed by session creating
  * @queue_index: queue index of cryptodev backend client
  * @errp: pointer to a NULL-initialized error object
- * @cb: callback when session create is compeleted
- * @opaque: parameter passed to callback
  *
- * Create a session for symmetric/asymmetric algorithms
+ * Create a session for symmetric/symmetric algorithms
  *
- * Returns: 0 for success and cb will be called when creation is completed,
- * negative value for error, and cb will not be called.
+ * Returns: session id on success, or -1 on error
  */
-int cryptodev_backend_create_session(
+int64_t cryptodev_backend_create_session(
            CryptoDevBackend *backend,
            CryptoDevBackendSessionInfo *sess_info,
-           uint32_t queue_index,
-           CryptoDevCompletionFunc cb,
-           void *opaque);
+           uint32_t queue_index, Error **errp);
 
 /**
  * cryptodev_backend_close_session:
@@ -335,43 +319,34 @@ int cryptodev_backend_create_session(
  * @session_id: the session id
  * @queue_index: queue index of cryptodev backend client
  * @errp: pointer to a NULL-initialized error object
- * @cb: callback when session create is compeleted
- * @opaque: parameter passed to callback
  *
  * Close a session for which was previously
  * created by cryptodev_backend_create_session()
  *
- * Returns: 0 for success and cb will be called when creation is completed,
- * negative value for error, and cb will not be called.
+ * Returns: 0 on success, or Negative on error
  */
 int cryptodev_backend_close_session(
            CryptoDevBackend *backend,
            uint64_t session_id,
-           uint32_t queue_index,
-           CryptoDevCompletionFunc cb,
-           void *opaque);
+           uint32_t queue_index, Error **errp);
 
 /**
  * cryptodev_backend_crypto_operation:
  * @backend: the cryptodev backend object
- * @opaque1: pointer to a VirtIOCryptoReq object
+ * @opaque: pointer to a VirtIOCryptoReq object
  * @queue_index: queue index of cryptodev backend client
  * @errp: pointer to a NULL-initialized error object
- * @cb: callbacks when operation is completed
- * @opaque2: parameter passed to cb
  *
  * Do crypto operation, such as encryption and
  * decryption
  *
- * Returns: 0 for success and cb will be called when creation is completed,
- * negative value for error, and cb will not be called.
+ * Returns: VIRTIO_CRYPTO_OK on success,
+ *         or -VIRTIO_CRYPTO_* on error
  */
 int cryptodev_backend_crypto_operation(
                  CryptoDevBackend *backend,
-                 void *opaque1,
-                 uint32_t queue_index,
-                 CryptoDevCompletionFunc cb,
-                 void *opaque2);
+                 void *opaque,
+                 uint32_t queue_index, Error **errp);
 
 /**
  * cryptodev_backend_set_used:

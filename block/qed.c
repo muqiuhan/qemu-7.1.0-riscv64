@@ -254,7 +254,7 @@ static CachedL2Table *qed_new_l2_table(BDRVQEDState *s)
     return l2_table;
 }
 
-static bool coroutine_fn qed_plug_allocating_write_reqs(BDRVQEDState *s)
+static bool qed_plug_allocating_write_reqs(BDRVQEDState *s)
 {
     qemu_co_mutex_lock(&s->table_lock);
 
@@ -273,7 +273,7 @@ static bool coroutine_fn qed_plug_allocating_write_reqs(BDRVQEDState *s)
     return true;
 }
 
-static void coroutine_fn qed_unplug_allocating_write_reqs(BDRVQEDState *s)
+static void qed_unplug_allocating_write_reqs(BDRVQEDState *s)
 {
     qemu_co_mutex_lock(&s->table_lock);
     assert(s->allocating_write_reqs_plugged);
@@ -387,7 +387,7 @@ static int coroutine_fn bdrv_qed_do_open(BlockDriverState *bs, QDict *options,
     int64_t file_size;
     int ret;
 
-    ret = bdrv_co_pread(bs->file, 0, sizeof(le_header), &le_header, 0);
+    ret = bdrv_pread(bs->file, 0, sizeof(le_header), &le_header, 0);
     if (ret < 0) {
         error_setg(errp, "Failed to read QED header");
         return ret;
@@ -445,8 +445,6 @@ static int coroutine_fn bdrv_qed_do_open(BlockDriverState *bs, QDict *options,
     }
 
     if ((s->header.features & QED_F_BACKING_FILE)) {
-        g_autofree char *backing_file_str = NULL;
-
         if ((uint64_t)s->header.backing_filename_offset +
             s->header.backing_filename_size >
             s->header.cluster_size * s->header.header_size) {
@@ -454,21 +452,16 @@ static int coroutine_fn bdrv_qed_do_open(BlockDriverState *bs, QDict *options,
             return -EINVAL;
         }
 
-        backing_file_str = g_malloc(sizeof(bs->backing_file));
         ret = qed_read_string(bs->file, s->header.backing_filename_offset,
                               s->header.backing_filename_size,
-                              backing_file_str, sizeof(bs->backing_file));
+                              bs->auto_backing_file,
+                              sizeof(bs->auto_backing_file));
         if (ret < 0) {
             error_setg(errp, "Failed to read backing filename");
             return ret;
         }
-
-        if (!g_str_equal(backing_file_str, bs->backing_file)) {
-            pstrcpy(bs->backing_file, sizeof(bs->backing_file),
-                    backing_file_str);
-            pstrcpy(bs->auto_backing_file, sizeof(bs->auto_backing_file),
-                    backing_file_str);
-        }
+        pstrcpy(bs->backing_file, sizeof(bs->backing_file),
+                bs->auto_backing_file);
 
         if (s->header.features & QED_F_BACKING_FORMAT_NO_PROBE) {
             pstrcpy(bs->backing_format, sizeof(bs->backing_format), "raw");
@@ -492,7 +485,7 @@ static int coroutine_fn bdrv_qed_do_open(BlockDriverState *bs, QDict *options,
         }
 
         /* From here on only known autoclear feature bits are valid */
-        bdrv_co_flush(bs->file->bs);
+        bdrv_flush(bs->file->bs);
     }
 
     s->l1_table = qed_alloc_table(s);
@@ -561,11 +554,11 @@ static int bdrv_qed_open(BlockDriverState *bs, QDict *options, int flags,
         .errp = errp,
         .ret = -EINPROGRESS
     };
-    int ret;
 
-    ret = bdrv_open_file_child(NULL, options, "file", bs, errp);
-    if (ret < 0) {
-        return ret;
+    bs->file = bdrv_open_child(NULL, options, "file", bs, &child_of_bds,
+                               BDRV_CHILD_IMAGE, false, errp);
+    if (!bs->file) {
+        return -EINVAL;
     }
 
     bdrv_qed_init_state(bs);
@@ -693,7 +686,7 @@ static int coroutine_fn bdrv_qed_co_create(BlockdevCreateOptions *opts,
      * The QED format associates file length with allocation status,
      * so a new file (which is empty) must have a length of 0.
      */
-    ret = blk_co_truncate(blk, 0, true, PREALLOC_MODE_OFF, 0, errp);
+    ret = blk_truncate(blk, 0, true, PREALLOC_MODE_OFF, 0, errp);
     if (ret < 0) {
         goto out;
     }
@@ -712,18 +705,18 @@ static int coroutine_fn bdrv_qed_co_create(BlockdevCreateOptions *opts,
     }
 
     qed_header_cpu_to_le(&header, &le_header);
-    ret = blk_co_pwrite(blk, 0, sizeof(le_header), &le_header, 0);
+    ret = blk_pwrite(blk, 0, sizeof(le_header), &le_header, 0);
     if (ret < 0) {
         goto out;
     }
-    ret = blk_co_pwrite(blk, sizeof(le_header), header.backing_filename_size,
+    ret = blk_pwrite(blk, sizeof(le_header), header.backing_filename_size,
                      qed_opts->backing_file, 0);
     if (ret < 0) {
         goto out;
     }
 
     l1_table = g_malloc0(l1_size);
-    ret = blk_co_pwrite(blk, header.l1_table_offset, l1_size, l1_table, 0);
+    ret = blk_pwrite(blk, header.l1_table_offset, l1_size, l1_table, 0);
     if (ret < 0) {
         goto out;
     }
@@ -1395,6 +1388,7 @@ static int coroutine_fn bdrv_qed_co_writev(BlockDriverState *bs,
                                            int64_t sector_num, int nb_sectors,
                                            QEMUIOVector *qiov, int flags)
 {
+    assert(!flags);
     return qed_co_request(bs, sector_num, qiov, nb_sectors, QED_AIOCB_WRITE);
 }
 
